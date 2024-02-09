@@ -78,6 +78,7 @@ class UnconditionalTask(AbstractTask):
         if segment_size is None:
             segment_size = 32768
 
+        print("n_samples:", n_samples)
         for i in range(n_samples):
             sample = diffusion.p_sample_loop(
                 model,

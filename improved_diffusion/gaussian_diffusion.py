@@ -24,7 +24,7 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
     Beta schedules may be added, but should not be removed or changed once
     they are committed to maintain backwards compatibility.
     """
-    if schedule_name == "linear":
+    if schedule_name == "linear": ###chosen in default
         # Linear schedule from Ho et al, extended to work for any number of
         # diffusion steps.
         # scale = 1000 / num_diffusion_timesteps
@@ -319,6 +319,7 @@ class GaussianDiffusion:
             if self.model_mean_type == ModelMeanType.START_X:
                 pred_xstart = process_xstart(model_output)
             else:
+                ############
                 pred_xstart = process_xstart(
                     self._predict_xstart_from_eps(x_t=x, t=t, eps=model_output)
                 )
@@ -329,6 +330,10 @@ class GaussianDiffusion:
             model_mean, _, _ = self.q_posterior_mean_variance(
                 x_start=pred_xstart, x_t=x, t=t
             )
+            ###########
+            if guidance: 
+                model_mean + s_grad * model_variance * grad_log_p
+            #############
         else:
             raise NotImplementedError(self.model_mean_type)
 
@@ -381,7 +386,7 @@ class GaussianDiffusion:
         cond_fn=None,
         degradation=None,
         orig_x=None,
-    ):
+    ): ########
         """
         Sample x_{t-1} from the model at the given timestep.
         :param model: the model to sample from.
@@ -405,6 +410,10 @@ class GaussianDiffusion:
             model_kwargs=model_kwargs,
             degradation=degradation,
             orig_x=orig_x,
+            guidance=False,
+            guid_s=0,
+            cur_noise_var=None,
+            y_noisy=None
         )
         noise = th.randn_like(x)
         nonzero_mask = (
@@ -415,8 +424,20 @@ class GaussianDiffusion:
         #     out["mean"] = self.condition_mean(
         #         cond_fn, out, x, t, model_kwargs=model_kwargs
         #     )
-
-        sample = out["mean"] + nonzero_mask * th.exp(0.5 * out["log_variance"]) * noise
+        cur_mean = out["mean"]
+        sigma_t = th.exp(0.5 * out["log_variance"])
+        if guidance:
+            alpha_bar_t = _extract_into_tensor(self.alphas_cumprod, t, x.shape)
+            # c3 = 1 / torch.sqrt(Alpha_bar[t])
+            c3 = _extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x.shape)
+            # c4 = (1 - Alpha_bar[t]) / Alpha_bar[t]
+            c4 = torch.div(1- alpha_bar_t, alpha_bar_t)
+            # print("c3: ", c3)
+            # print("c4: ", c4)
+            # print("x_before: ", x)
+            grad_log_p = c3 * (y_noisy - c3 * x) / (c4 + cur_noise_var) ** 2
+            cur_mean = cur_mean + guid_s * sigma_t * grad_log_p
+        sample = cur_mean + nonzero_mask * sigma_t * noise
         return {"sample": sample, "pred_xstart": out["pred_xstart"]}
 
     def p_sample_loop(
@@ -568,7 +589,7 @@ class GaussianDiffusion:
                         None, img, t, y, threshold=200, steps=1, source_separation=False
                     )
 
-            with th.no_grad():
+            with th.no_grad():  #######
                 out = self.p_sample(
                     model,
                     img,
