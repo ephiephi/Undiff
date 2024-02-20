@@ -15,6 +15,8 @@ from .losses import discretized_gaussian_log_likelihood, normal_kl
 from .nn import mean_flat
 from .tasks import TaskType
 
+import torchaudio
+
 
 def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
     """
@@ -330,10 +332,6 @@ class GaussianDiffusion:
             model_mean, _, _ = self.q_posterior_mean_variance(
                 x_start=pred_xstart, x_t=x, t=t
             )
-            ###########
-            if guidance: 
-                model_mean + s_grad * model_variance * grad_log_p
-            #############
         else:
             raise NotImplementedError(self.model_mean_type)
 
@@ -386,6 +384,10 @@ class GaussianDiffusion:
         cond_fn=None,
         degradation=None,
         orig_x=None,
+        guidance=False,
+        guid_s=0,
+        cur_noise_var=None,
+        y_noisy=None
     ): ########
         """
         Sample x_{t-1} from the model at the given timestep.
@@ -410,10 +412,6 @@ class GaussianDiffusion:
             model_kwargs=model_kwargs,
             degradation=degradation,
             orig_x=orig_x,
-            guidance=False,
-            guid_s=0,
-            cur_noise_var=None,
-            y_noisy=None
         )
         noise = th.randn_like(x)
         nonzero_mask = (
@@ -434,7 +432,8 @@ class GaussianDiffusion:
             c4 = torch.div(1- alpha_bar_t, alpha_bar_t)
             # print("c3: ", c3)
             # print("c4: ", c4)
-            # print("x_before: ", x)
+            # print("x: ", x)
+            # print("y_noisy: ", y_noisy)
             grad_log_p = c3 * (y_noisy - c3 * x) / (c4 + cur_noise_var) ** 2
             cur_mean = cur_mean + guid_s * sigma_t * grad_log_p
         sample = cur_mean + nonzero_mask * sigma_t * noise
@@ -459,6 +458,10 @@ class GaussianDiffusion:
         orig_x=None,
         degradation=None,
         use_rg_bwe: bool = False,
+        guidance=False,
+        guid_s=0,
+        cur_noise_var=None,
+        y_noisy=None
     ):
         """
         Generate samples from the model.
@@ -501,6 +504,10 @@ class GaussianDiffusion:
             orig_x=orig_x,
             degradation=degradation,
             use_rg_bwe=use_rg_bwe,
+            guidance=guidance,
+            guid_s=guid_s,
+            cur_noise_var=cur_noise_var,
+            y_noisy=y_noisy
         ):
             final = sample
 
@@ -525,6 +532,10 @@ class GaussianDiffusion:
         measurement=None,
         measurement_cond_fn=None,
         use_rg_bwe: bool = False,
+        guidance=False,
+        guid_s=0,
+        cur_noise_var=None,
+        y_noisy=None
     ):
         """
         Generate samples from the model and yield intermediate samples from
@@ -533,8 +544,28 @@ class GaussianDiffusion:
         Returns a generator over dicts, where each dict is the return value of
         p_sample().
         """
+        
         if device is None:
             device = next(model.parameters()).device
+        
+        print("calculating y noisy")
+        if y_noisy is not None:
+            cur_noise_var = float(y_noisy.split("var")[1].split(".wav")[0])
+            print("cur_noise_var: ", cur_noise_var)
+            print("shape: ", shape)
+            
+            y_noisy_, sr = torchaudio.load(y_noisy)
+            shape = (1,1,y_noisy_.shape[1])
+            print("shape: ", shape)
+            
+            y_noisy = torch.zeros(*shape)
+            y_noisy[0,:,:] = y_noisy_
+            y_noisy = y_noisy.to(device=device)
+            print("y_noisy: ", y_noisy)
+            
+        
+        
+        
         assert isinstance(shape, (tuple, list))
         if noise is not None:
             img = noise
@@ -578,6 +609,9 @@ class GaussianDiffusion:
         if use_rg_bwe:
             rg_exps.add(TaskType.BWE)
 
+      
+        
+        
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
 
@@ -599,6 +633,10 @@ class GaussianDiffusion:
                     model_kwargs=model_kwargs,
                     degradation=degradation if sample_method == "BWE" else None,
                     orig_x=orig_x,
+                    guidance=guidance,
+                    guid_s=guid_s,
+                    cur_noise_var=cur_noise_var,
+                    y_noisy=y_noisy
                 )
 
             if sample_method == TaskType.SOURCE_SEPARATION:

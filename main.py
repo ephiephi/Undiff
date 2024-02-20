@@ -6,6 +6,7 @@ import torch
 import improved_diffusion
 from improved_diffusion.tasks import TaskType
 
+from  improved_diffusion.script_util import create_gaussian_diffusion
 
 def instantiate_model_and_diffusion(cfg, device):
     model = hydra.utils.instantiate(cfg.model.model)
@@ -59,7 +60,7 @@ def inference(cfg):
     )
 
     task.inference(
-        files_or_num, model, diffusion, cfg.sampling_rate, cfg.segment_size, DEVICE
+        files_or_num, model, diffusion, cfg.sampling_rate, cfg.segment_size, DEVICE, cfg.guidance, cfg.guid_s, cfg.cur_noise_var,cfg.y_noisy, cfg.outpath 
     )
 
 

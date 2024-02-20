@@ -56,11 +56,18 @@ class UnconditionalTask(AbstractTask):
     def exists(path: str):
         return os.path.exists(path)
 
-    def save_audios(self, pred_sample: torch.Tensor, idx: int, sr: int = 16000):
+    def save_audios(self, pred_sample: torch.Tensor, idx: int, sr: int = 16000, outpath: str = None, y_noisy: str = None):
         name = f"Sample_{idx}.wav"
         torchaudio.save(
             os.path.join(self.generated_path, name), pred_sample.view(1, -1), sr
         )
+        if y_noisy:
+            name = os.path.basename(y_noisy)
+        if outpath:
+            torchaudio.save(
+            os.path.join(outpath, name), pred_sample.view(1, -1), sr
+        )
+            
 
     def inference(
         self,
@@ -70,6 +77,11 @@ class UnconditionalTask(AbstractTask):
         target_sample_rate: int = 16000,
         segment_size: Optional[int] = None,
         device: str = "cpu",
+        guidance=False,
+        guid_s=0,
+        cur_noise_var=None,
+        y_noisy=None,
+        outpath=None
     ):
         assert self.task_type == TaskType.UNCONDITIONAL
         fake_samples = []
@@ -89,17 +101,23 @@ class UnconditionalTask(AbstractTask):
                 orig_x=None,
                 progress=True,
                 degradation=None,
+                guidance=guidance,
+                guid_s=guid_s,
+                cur_noise_var=cur_noise_var,
+                y_noisy=y_noisy
             ).cpu()
 
             fake_samples.append(sample)
 
-            self.save_audios(sample, i, sr=target_sample_rate)
+            self.save_audios(sample, i, sr=target_sample_rate, outpath=outpath, y_noisy=y_noisy)
 
             del sample
             torch.cuda.empty_cache()
 
         scores = calculate_all_metrics(fake_samples, self.metrics, reference_wavs=None)
         log_results(results_dir=self.output_dir, res=scores)
+        if outpath:
+            log_results(results_dir=outpath, res=scores)
 
 
 class BaseInverseTask(UnconditionalTask):
