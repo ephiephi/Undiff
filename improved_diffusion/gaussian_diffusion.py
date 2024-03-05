@@ -434,7 +434,8 @@ class GaussianDiffusion:
             # print("c4: ", c4)
             # print("x: ", x)
             # print("y_noisy: ", y_noisy)
-            grad_log_p = c3 * (y_noisy - c3 * x) / (c4 + cur_noise_var) ** 2
+            # grad_log_p = c3 * (y_noisy - c3 * x) / (c4 + cur_noise_var) ** 2  #bug
+            grad_log_p = c3 * (y_noisy - c3 * cur_mean) / (c4 + cur_noise_var) ** 2
             cur_mean = cur_mean + guid_s * sigma_t * grad_log_p
         sample = cur_mean + nonzero_mask * sigma_t * noise
         return {"sample": sample, "pred_xstart": out["pred_xstart"]}
