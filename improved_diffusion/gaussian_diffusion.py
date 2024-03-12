@@ -146,7 +146,20 @@ class GaussianDiffusion:
         self.alphas_cumprod_prev = np.append(1.0, self.alphas_cumprod[:-1])
         self.alphas_cumprod_next = np.append(self.alphas_cumprod[1:], 0.0)
         assert self.alphas_cumprod_prev.shape == (self.num_timesteps,)
-
+        
+        self.s_guid_scheduler_linear = np.linspace(0, 1, num=len(alphas))
+        self.s_guid_scheduler_linear2 = np.linspace(0.04, 1, num=len(alphas))
+        
+        x_ = np.linspace(0, np.pi, len(alphas))  
+        self.s_guid_scheduler_sinusoidal = (np.sin(x_ - np.pi/2) + 1) / 2
+        
+        x_2 = np.linspace(0, 10, num=len(alphas))  
+        self.s_guid_scheduler_exponential = (np.exp(x_2))/(np.exp(x_2[-1]))
+        x_3 = np.linspace(0, 20, num=len(alphas))  
+        self.s_guid_scheduler_exponential2 = (np.exp(x_3))/(np.exp(x_3[-1]))
+        x_4 = np.linspace(0, 5, num=len(alphas))  
+        self.s_guid_scheduler_exponential3 = (np.exp(x_4))/(np.exp(x_4[-1]))
+        
         # calculations for diffusion q(x_t | x_{t-1}) and others
         self.sqrt_alphas_cumprod = np.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = np.sqrt(1.0 - self.alphas_cumprod)
@@ -387,7 +400,8 @@ class GaussianDiffusion:
         guidance=False,
         guid_s=0,
         cur_noise_var=None,
-        y_noisy=None
+        y_noisy=None,
+        s_schedule=None
     ): ########
         """
         Sample x_{t-1} from the model at the given timestep.
@@ -435,8 +449,27 @@ class GaussianDiffusion:
             # print("x: ", x)
             # print("y_noisy: ", y_noisy)
             # grad_log_p = c3 * (y_noisy - c3 * x) / (c4 + cur_noise_var) ** 2  #bug
+            # self.s_guid_scheduler_linear
+            # self.s_guid_scheduler_sinusoidal print("t: ", t)
+            # print("t: ", t)
+            s_scheduler = self.s_guid_scheduler_linear
+            if s_schedule=="linear":
+                s_scheduler = self.s_guid_scheduler_linear
+            elif s_schedule=="linear2":
+                s_scheduler = self.s_guid_scheduler_linear2
+            elif s_schedule=="exponential":
+                s_scheduler = self.s_guid_scheduler_exponential
+            elif s_schedule=="exponential2":
+                s_scheduler = self.s_guid_scheduler_exponential2
+            elif s_schedule=="sinusoidal":
+                s_scheduler = self.s_guid_scheduler_sinusoidal
+            elif s_schedule=="exponential3":
+                s_scheduler = self.s_guid_scheduler_exponential3
+            cur_s = _extract_into_tensor(guid_s*s_scheduler, t, x.shape)
             grad_log_p = c3 * (y_noisy - c3 * cur_mean) / (c4 + cur_noise_var) ** 2
-            cur_mean = cur_mean + guid_s * sigma_t * grad_log_p
+            cur_mean = cur_mean + cur_s * sigma_t * grad_log_p
+            print("guid_s: ", guid_s)
+            print("cur_s: ", cur_s) #/print("guid_s: ", guid_s)
         sample = cur_mean + nonzero_mask * sigma_t * noise
         return {"sample": sample, "pred_xstart": out["pred_xstart"]}
 
@@ -462,7 +495,8 @@ class GaussianDiffusion:
         guidance=False,
         guid_s=0,
         cur_noise_var=None,
-        y_noisy=None
+        y_noisy=None,
+        s_schedule=None
     ):
         """
         Generate samples from the model.
@@ -508,7 +542,8 @@ class GaussianDiffusion:
             guidance=guidance,
             guid_s=guid_s,
             cur_noise_var=cur_noise_var,
-            y_noisy=y_noisy
+            y_noisy=y_noisy,
+            s_schedule=s_schedule
         ):
             final = sample
 
@@ -536,7 +571,8 @@ class GaussianDiffusion:
         guidance=False,
         guid_s=0,
         cur_noise_var=None,
-        y_noisy=None
+        y_noisy=None,
+        s_schedule=None
     ):
         """
         Generate samples from the model and yield intermediate samples from
@@ -637,7 +673,8 @@ class GaussianDiffusion:
                     guidance=guidance,
                     guid_s=guid_s,
                     cur_noise_var=cur_noise_var,
-                    y_noisy=y_noisy
+                    y_noisy=y_noisy,
+                    s_schedule=s_schedule
                 )
 
             if sample_method == TaskType.SOURCE_SEPARATION:

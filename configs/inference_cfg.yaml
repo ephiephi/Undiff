@@ -15,3 +15,5 @@ guid_s: 0.001
 cur_noise_var: null
 y_noisy: "/data/ephraim/datasets/known_noise/exp3b/noisy_wav/digits_snr5_power0.0012988714734092355_var0.0012939611915498972.wav"
 outpath: /data/ephraim/datasets/known_noise/undiff/exp3b/enhanced/
+clean_wav: null
+s_schedule: null

@@ -81,7 +81,9 @@ class UnconditionalTask(AbstractTask):
         guid_s=0,
         cur_noise_var=None,
         y_noisy=None,
-        outpath=None
+        outpath=None,
+        clean_wav=None,
+        s_schedule=None
     ):
         assert self.task_type == TaskType.UNCONDITIONAL
         fake_samples = []
@@ -104,7 +106,8 @@ class UnconditionalTask(AbstractTask):
                 guidance=guidance,
                 guid_s=guid_s,
                 cur_noise_var=cur_noise_var,
-                y_noisy=y_noisy
+                y_noisy=y_noisy,
+                s_schedule=s_schedule
             ).cpu()
 
             fake_samples.append(sample)
@@ -113,8 +116,11 @@ class UnconditionalTask(AbstractTask):
 
             del sample
             torch.cuda.empty_cache()
-
-        scores = calculate_all_metrics(fake_samples, self.metrics, reference_wavs=None)
+        
+        reference_wavs=None
+        if clean_wav:
+            reference_wavs = clean_wav
+        scores = calculate_all_metrics(fake_samples, self.metrics, reference_wavs=reference_wavs)
         log_results(results_dir=self.output_dir, res=scores)
         if outpath:
             log_results(results_dir=outpath, res=scores)
