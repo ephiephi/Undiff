@@ -75,3 +75,109 @@ def calculate_all_metrics(wavs, metrics, n_max_files=None, reference_wavs=None):
             pass
     scores = {k: (np.mean(v), np.std(v)) for k, v in scores.items()}
     return scores
+
+
+def calc_se_metrics(wavs, metrics, n_max_files=None, reference_wavs=None):
+    test_noisy = wavs
+
+    reference = os.path.join(clean_dir, ref_filename)
+    # test_enhanced = os.path.join(enhance_dir, "1000k_0.wav")
+    print(enhance_dir)
+    test_files = glob(enhance_dir+"*.wav")
+    print("test_files:", test_files)
+    WAVEFORM_SPEECH, SAMPLE_RATE_SPEECH = torchaudio.load(reference)
+    WAVEFORM_NOISE, SAMPLE_RATE_NOISE = torchaudio.load(test_noisy)
+    
+    stoi_enhanced_array = np.zeros(len(test_files))
+    pesq_enhanced_array = np.zeros(len(test_files))
+    stoi_enhanced = None
+    pesq_enhanced = None
+    try:
+        for i, test_enhanced in enumerate(test_files):
+            WAVEFORM_enhanced, SAMPLE_RATE_enhanced = torchaudio.load(test_enhanced)
+            
+            if WAVEFORM_SPEECH.shape[1] < WAVEFORM_enhanced.shape[1]:
+                WAVEFORM_enhanced = WAVEFORM_enhanced[:, : WAVEFORM_SPEECH.shape[1]]
+            else:
+                WAVEFORM_SPEECH = WAVEFORM_SPEECH[:, : WAVEFORM_enhanced.shape[1]]
+            if WAVEFORM_NOISE.shape[1] < WAVEFORM_enhanced.shape[1]:
+                    WAVEFORM_enhanced = WAVEFORM_enhanced[:, : WAVEFORM_NOISE.shape[1]]
+            else:
+                WAVEFORM_NOISE = WAVEFORM_NOISE[:, : WAVEFORM_enhanced.shape[1]]
+            
+            pesq_enhanced_array[i] = pesq(
+                16000,
+                WAVEFORM_SPEECH[0].numpy(),
+                WAVEFORM_enhanced[0].numpy(),
+                mode="wb",
+            )
+            stoi_enhanced_array[i] = stoi(
+                WAVEFORM_SPEECH[0].numpy(),
+                WAVEFORM_enhanced[0].numpy(),
+                16000,
+                extended=False,
+            )
+            stoi_enhanced = float(np.mean(stoi_enhanced_array))
+            pesq_enhanced = float(np.mean(pesq_enhanced_array))
+            print("pesq_enhanced_array: ",pesq_enhanced_array)
+            print("pesq_enhanced: ",pesq_enhanced)
+    except: 
+        print("------------- failed --------------", enhance_dir)
+        dont_calculated.append(ref_filename)
+        stoi_enhanced = -1
+        pesq_enhanced = -1
+    # # print("Computing scores for ", reference)
+    # print("noiseshape: ", WAVEFORM_NOISE.shape)
+    # print("speechshape: ", WAVEFORM_SPEECH.shape)
+    # print("enhancedshape: " , WAVEFORM_enhanced.shape)
+    try:
+        pesq_noise = pesq(
+            16000,
+            WAVEFORM_SPEECH[0].numpy(),
+            WAVEFORM_NOISE[0].numpy(),
+            mode="wb",
+        )
+        stoi_noise = stoi(
+            WAVEFORM_SPEECH[0].numpy(),
+            WAVEFORM_NOISE[0].numpy(),
+            16000,
+            extended=False,
+        )
+    except: 
+        print("------------- failed --------------", enhance_dir)
+        dont_calculated.append(ref_filename)
+        pesq_noise = -1
+        stoi_noise = -1
+
+
+    results["pesq_noisy"][ref_filename] = pesq_noise
+    results["stoi_noisy"][ref_filename] = stoi_noise
+
+    results["stoi_enhanced"][ref_filename] = stoi_enhanced
+    results["pesq_enhanced"][ref_filename] = pesq_enhanced
+    df = pd.DataFrame.from_dict(results)
+    print("pesq_enhanced: ", pesq_enhanced)
+    print("pesq_noisy: ", pesq_noise)
+    print(df["pesq_noisy"])
+    print(df["pesq_enhanced"])
+    df["pesq_diff"] = df["pesq_enhanced"].sub(df["pesq_noisy"])
+    df["stoi_diff"] = df["stoi_enhanced"].sub(df["stoi_noisy"])
+    # else:
+    #     df["pesq_noisy"][ref_filename] = pesq_noise
+    #     df["stoi_noisy"][ref_filename] = stoi_noise
+
+    #     df["stoi_enhanced"][ref_filename] = stoi_enhanced
+    #     df["pesq_enhanced"][ref_filename] = pesq_enhanced
+    #     df["pesq_diff"] = -1
+    #     df["stoi_diff"] = -1
+    # except:
+    #     results["pesq_noisy"][ref_filename] = None
+    #     results["stoi_noisy"][ref_filename] = None
+
+    #     results["stoi_enhanced"][ref_filename] = None
+    #     results["pesq_enhanced"][ref_filename] = None
+    #     df["pesq_diff"] = None
+    #     df["stoi_diff"] = None
+    #     df = df = pd.DataFrame.from_dict(results)
+            
+    return df

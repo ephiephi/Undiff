@@ -57,12 +57,18 @@ class UnconditionalTask(AbstractTask):
         return os.path.exists(path)
 
     def save_audios(self, pred_sample: torch.Tensor, idx: int, sr: int = 16000, outpath: str = None, y_noisy: str = None):
+        #todo:
+        if pred_sample.max() > 1:
+            pred_sample = pred_sample/pred_sample.max()
         name = f"Sample_{idx}.wav"
         torchaudio.save(
             os.path.join(self.generated_path, name), pred_sample.view(1, -1), sr
         )
         if y_noisy:
             name = os.path.basename(y_noisy)
+        import pickle
+        with open('sample_.pickle', 'wb') as handle:
+            pickle.dump(pred_sample, handle, protocol=pickle.HIGHEST_PROTOCOL)
         if outpath:
             torchaudio.save(
             os.path.join(outpath, name), pred_sample.view(1, -1), sr
@@ -83,7 +89,9 @@ class UnconditionalTask(AbstractTask):
         y_noisy=None,
         outpath=None,
         clean_wav=None,
-        s_schedule=None
+        s_schedule=None,
+        noise_type=None, 
+        noise_model_path=None
     ):
         assert self.task_type == TaskType.UNCONDITIONAL
         fake_samples = []
@@ -107,7 +115,9 @@ class UnconditionalTask(AbstractTask):
                 guid_s=guid_s,
                 cur_noise_var=cur_noise_var,
                 y_noisy=y_noisy,
-                s_schedule=s_schedule
+                s_schedule=s_schedule,
+                noise_type=noise_type, 
+                noise_model_path=noise_model_path
             ).cpu()
 
             fake_samples.append(sample)
@@ -188,6 +198,8 @@ class BaseInverseTask(UnconditionalTask):
         idx: int,
         sr: int = 16000,
     ):
+        if pred_sample.max() > 1:
+            pred_sample = pred_sample/pred_sample.max()
         name = f"Sample_{idx}.wav"
         torchaudio.save(
             os.path.join(self.generated_path, name), pred_sample.view(1, -1), sr

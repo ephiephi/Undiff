@@ -1,3 +1,4 @@
 results/
 outputs/
 *.pyc
+*.cpython-311.pyc

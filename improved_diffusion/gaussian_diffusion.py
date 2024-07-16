@@ -10,13 +10,75 @@ import math
 import numpy as np
 import torch
 import torch as th
+import torch
 
 from .losses import discretized_gaussian_log_likelihood, normal_kl
 from .nn import mean_flat
 from .tasks import TaskType
 
 import torchaudio
+import pickle
+from torch import nn
+from torch.utils.data import Dataset
 
+
+class NoiseDataset(Dataset):
+    def __init__(self, data_tensor, gt_tensor):
+        self.data_tensor =data_tensor
+        self.gt_tensor = gt_tensor
+
+    def __len__(self):
+        return self.data_tensor.shape[0]
+
+    def __getitem__(self, idx):
+        item = self.data_tensor[idx,:,:]
+        cur_gt = self.gt_tensor[idx]
+        return item, cur_gt
+
+def CausalConv1d(in_channels, out_channels, kernel_size, dilation=1, **kwargs):
+   pad = (kernel_size - 1) * dilation +1
+   return nn.Conv1d(in_channels, out_channels, kernel_size, padding=pad, dilation=dilation, **kwargs)
+
+class Network(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = CausalConv1d(1, 2, kernel_size=3, dilation=1)
+
+    def forward(self, x, cur_gt):
+        x = self.conv1(x)
+        # print("self.conv1.padding: ", self.conv1.padding)
+        if self.conv1.padding[0] != 0:
+            x = x[:, :, :-self.conv1.padding[0]-1]  # remove trailing padding
+        means = x[:,0,:]
+        log_var = x[:,1,:]
+        stds = torch.exp(0.5 *log_var)
+        return means, stds
+    
+    def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
+        # model_likelihood=0
+        wav_tensor = wav_tensor.squeeze()
+        means_=expected_means.squeeze()
+        stds_ = expected_stds.squeeze()
+        # for i in range(len(wav_tensor)):
+        #     exp_ = torch.exp(-(1/(2*stds_[i]**2))*(wav_tensor[i]-means_[i])**2)
+        #     param_ = 1/(np.sqrt(2*np.pi)*stds_[i])
+        #     model_likelihood_dot += torch.log(exp_*param_)
+        exp_all = -(1/2)*((torch.square(wav_tensor-means_)/torch.square(stds_)))
+        param_all = 1/(np.sqrt(2*np.pi)*stds_)
+        model_likelihood1 = torch.sum(torch.log(param_all), axis=-1) 
+        model_likelihood2 = torch.sum(exp_all, axis=-1) 
+
+        # model_likelihood2 = torch.sum(torch.log(1/(np.sqrt(2*np.pi)*stds_)), axis=-1) 
+        # model_likelihood = model_likelihood + model_likelihood2
+        if verbose:
+            print("model_likelihood1: ", model_likelihood1)
+            print("model_likelihood2: ", model_likelihood2)
+        return model_likelihood1 + model_likelihood2
+    
+    def casual_loss(self, expected_means, expected_stds, wav_tensor):
+        model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
+        return -model_likelihood
+    
 
 def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
     """
@@ -159,7 +221,38 @@ class GaussianDiffusion:
         self.s_guid_scheduler_exponential2 = (np.exp(x_3))/(np.exp(x_3[-1]))
         x_4 = np.linspace(0, 5, num=len(alphas))  
         self.s_guid_scheduler_exponential3 = (np.exp(x_4))/(np.exp(x_4[-1]))
+        #sinexp
+        def sin_exp(alphas, sinus_idx = 100):
+            #sinus
+            x_ = np.linspace(0, np.pi, len(alphas))  
+            s_guid_scheduler_sinusoidal = (np.sin(x_ - np.pi/2) + 1) / 2
+
+            # exponent 
+            start_value = 1.08
+            end_value = 1.48
+            exponential_array = np.logspace(np.log(start_value), np.log(end_value), sinus_idx, base=np.exp(20))
+            exponential_array = exponential_array/exponential_array[-1]*(s_guid_scheduler_sinusoidal[sinus_idx])
+            new_scheduler = np.concatenate((exponential_array,  s_guid_scheduler_sinusoidal[sinus_idx:]))
+            return new_scheduler
+        self.s_guid_scheduler_sin_exp = sin_exp(alphas)
+        #convex
+        def convex(alphas,basenum=50):
+            start_value = 1.48
+            end_value = 1.08
+            exponential_array = np.logspace(np.log(start_value), np.log(end_value), len(alphas), base=np.exp(basenum))
+            exponential_array = exponential_array/exponential_array[0]#*(s_guid_scheduler_sinusoidal[sinus_idx])
+            # new_scheduler = np.concatenate((exponential_array,  s_guid_scheduler_sinusoidal[sinus_idx:]))
+            # new_scheduler = np.concatenate((exponential_array,  s_guid_scheduler_sinusoidal[150:]))
+            return 1-exponential_array
+        self.s_guid_scheduler_convex = convex(alphas)
+        self.constant_scheduler = np.ones(len(alphas))
+        #sinus_increase
+        x_ = np.linspace(0, np.pi, len(alphas))  
+        scheduler_sinusoidal =1.2- (np.sin(x_ - np.pi/2) + 1) / 10 
+        self.sinus_increase = scheduler_sinusoidal
         
+
+
         # calculations for diffusion q(x_t | x_{t-1}) and others
         self.sqrt_alphas_cumprod = np.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = np.sqrt(1.0 - self.alphas_cumprod)
@@ -401,7 +494,10 @@ class GaussianDiffusion:
         guid_s=0,
         cur_noise_var=None,
         y_noisy=None,
-        s_schedule=None
+        s_schedule=None,
+        noise_type=None, 
+        noise_model=None,
+        diffusion_idx=None
     ): ########
         """
         Sample x_{t-1} from the model at the given timestep.
@@ -465,13 +561,82 @@ class GaussianDiffusion:
                 s_scheduler = self.s_guid_scheduler_sinusoidal
             elif s_schedule=="exponential3":
                 s_scheduler = self.s_guid_scheduler_exponential3
+            elif s_schedule=="sin_exp_150":
+                s_scheduler = self.s_guid_scheduler_sin_exp
+            elif s_schedule=="convex":
+                s_scheduler = self.s_guid_scheduler_convex
+            elif s_schedule=="constant":
+                s_scheduler = self.constant_scheduler
+            elif s_schedule=="sinus_increase":
+                s_scheduler = self.sinus_increase
+            else:
+                def convex_(alphas,basenum=50):
+                    start_value = 1.48
+                    end_value = 1.08
+                    exponential_array = np.logspace(np.log(start_value), np.log(end_value), len(alphas), base=np.exp(basenum))
+                    exponential_array = exponential_array/exponential_array[0]#*(s_guid_scheduler_sinusoidal
+                    return 1-exponential_array
+                s_scheduler = convex_(self.alphas, basenum=float(s_schedule))
+                
+                # def sinus_increase_range(alphas, range_=8):
+                #     range_ = range_*2
+                #     x_ = np.linspace(0, np.pi, len(alphas))
+                #     return 1+2/range_- (np.sin(x_ - np.pi/2) + 1) / range_
+                # s_scheduler = sinus_increase_range(self.alphas, range_=float(s_schedule))
+                
             cur_s = _extract_into_tensor(guid_s*s_scheduler, t, x.shape)
-            grad_log_p = c3 * (y_noisy - c3 * cur_mean) / (c4 + cur_noise_var) ** 2
-            cur_mean = cur_mean + cur_s * sigma_t * grad_log_p
-            print("guid_s: ", guid_s)
-            print("cur_s: ", cur_s) #/print("guid_s: ", guid_s)
+            # cur_s = _extract_into_tensor(guid_s*10*np.ones(s_scheduler.shape), t, x.shape)
+
+            
+            if noise_type == "loss_model":
+                
+                with torch.enable_grad():
+                    x_t = cur_mean[:].detach()#.requires_grad_(True)
+                    noise_model = noise_model.to("cuda")
+                    n_t = y_noisy - c3 * x_t
+                    n_t = n_t.requires_grad_(True)
+                    mu, sig = noise_model(n_t,"none" )
+                    loss = noise_model.calc_model_likelihood(mu, sig, n_t).to("cuda")#.requires_grad_(True)
+                    grad_log_p = -c3 * torch.autograd.grad(loss, n_t)[0]
+                    # import os
+                    # # base_root = "/data/ephraim/datasets/known_noise/undiff/exp_ar_5d/"
+                    # base_root = "/data/ephraim/datasets/known_noise/undiff/exp_ar_g/"
+
+                    # tarpath = base_root+"b/{}/noise_diffusion/{}.wav".format(guid_s, diffusion_idx)
+                    # root1 =  base_root+f"b/{guid_s}/noise_diffusion/"
+
+                    # if not os.path.exists(root1):
+                    #     os.mkdir(base_root+f"b/{guid_s}/")
+                    #     os.mkdir(root1)
+                    # if n_t.max() > 1:
+                    #     n_t_normed = n_t/n_t.max()
+                    # else:
+                    #     n_t_normed = n_t
+                    # torchaudio.save(tarpath, n_t_normed.to("cpu").view(1,-1), 16000)
+            else: 
+                grad_log_p = c3 * (y_noisy - c3 * cur_mean) / (c4 + cur_noise_var) ** 2
+            cur_mean = cur_mean + cur_s * sigma_t * grad_log_p.detach()
+            # root2 =  base_root+f"b/{guid_s}/x_t/"
+            # if not os.path.exists(root2):
+            #     os.mkdir(root2)
+            # xtpath = base_root + "b/{}/x_t/{}.wav".format(guid_s,diffusion_idx)
+            print("cur_mean.max(): ", cur_mean.max())
+            
+            # if cur_mean.max() > 1:
+            #     cur_mean_normed = cur_mean/cur_mean.max()
+            # else:
+            #     cur_mean_normed = cur_mean
+            # torchaudio.save(xtpath, cur_mean_normed.to("cpu").view(1,-1), 16000)
+
+            # loss_path = base_root+f"b/{guid_s}/losses.txt"
+            
+            print("loss: ", loss)
+            # print("grad_log_p: ", grad_log_p)
+            # print("c3: ", c3)
+            # print("cur_s: ", cur_s)
+            print("cur_mean: ", cur_mean) #/print("guid_s: ", guid_s)
         sample = cur_mean + nonzero_mask * sigma_t * noise
-        return {"sample": sample, "pred_xstart": out["pred_xstart"]}
+        return {"sample": sample, "pred_xstart": out["pred_xstart"],"loss": loss}#,"loss": loss
 
     def p_sample_loop(
         self,
@@ -496,7 +661,9 @@ class GaussianDiffusion:
         guid_s=0,
         cur_noise_var=None,
         y_noisy=None,
-        s_schedule=None
+        s_schedule=None,
+        noise_type=None, 
+        noise_model_path=None
     ):
         """
         Generate samples from the model.
@@ -543,7 +710,9 @@ class GaussianDiffusion:
             guid_s=guid_s,
             cur_noise_var=cur_noise_var,
             y_noisy=y_noisy,
-            s_schedule=s_schedule
+            s_schedule=s_schedule,
+            noise_type=noise_type, 
+            noise_model_path=noise_model_path
         ):
             final = sample
 
@@ -572,7 +741,9 @@ class GaussianDiffusion:
         guid_s=0,
         cur_noise_var=None,
         y_noisy=None,
-        s_schedule=None
+        s_schedule=None,
+        noise_type=None, 
+        noise_model_path=None
     ):
         """
         Generate samples from the model and yield intermediate samples from
@@ -592,16 +763,14 @@ class GaussianDiffusion:
             print("shape: ", shape)
             
             y_noisy_, sr = torchaudio.load(y_noisy)
-            shape = (1,1,y_noisy_.shape[1])
+            shape = (1,1,y_noisy_.shape[1])  ###########shape#######
             print("shape: ", shape)
             
             y_noisy = torch.zeros(*shape)
             y_noisy[0,:,:] = y_noisy_
             y_noisy = y_noisy.to(device=device)
             print("y_noisy: ", y_noisy)
-            
-        
-        
+         
         
         assert isinstance(shape, (tuple, list))
         if noise is not None:
@@ -627,6 +796,7 @@ class GaussianDiffusion:
         elif sample_method == TaskType.SOURCE_SEPARATION:
             snr = 0.00001
             xi = None
+            
 
         # define corrector (as in predictor-corrector sampling)
         if sample_method == TaskType.UNCONDITIONAL:
@@ -647,11 +817,18 @@ class GaussianDiffusion:
             rg_exps.add(TaskType.BWE)
 
       
+        if noise_model_path is not None:
+            with open(noise_model_path, 'rb') as handle:
+                params_dict = pickle.load(handle)
+                print("noise_model_path: ", noise_model_path)
+                noise_models = params_dict["nets"] 
+                # train_dataset = params_dict["train_dataset"]  
         
-        
+        loss_array=[]
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
-
+            noise_model = noise_models[i]
+            
             if sample_method in rg_exps:
                 img.requires_grad_(True)
                 if i != 199:
@@ -659,7 +836,7 @@ class GaussianDiffusion:
                     img = corrector.update_fn_adaptive(
                         None, img, t, y, threshold=200, steps=1, source_separation=False
                     )
-
+            
             with th.no_grad():  #######
                 out = self.p_sample(
                     model,
@@ -674,9 +851,13 @@ class GaussianDiffusion:
                     guid_s=guid_s,
                     cur_noise_var=cur_noise_var,
                     y_noisy=y_noisy,
-                    s_schedule=s_schedule
+                    s_schedule=s_schedule,
+                    noise_type=noise_type, 
+                    noise_model=noise_model,
+                    diffusion_idx=i 
                 )
-
+            loss_array.append(str(out["loss"]))
+            
             if sample_method == TaskType.SOURCE_SEPARATION:
                 y = degradation(orig_x)
                 img = corrector.update_fn_adaptive(
@@ -686,7 +867,14 @@ class GaussianDiffusion:
 
             yield out
             img = out["sample"]
-
+        path_pickle =  noise_model_path.replace("models", ("_"+str(s_schedule)+"_"+str(guid_s)))#+"_"
+        print(path_pickle)
+        if path_pickle != noise_model_path:
+            with open(path_pickle, 'wb') as handle:
+                pickle.dump(loss_array, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        else:
+            print("failed dumping loss array, bad path")
+        
     def ddim_sample(
         self,
         model,

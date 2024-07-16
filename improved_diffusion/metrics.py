@@ -107,6 +107,26 @@ class SiSNR(Metric):
         self.result["mean"] = np.mean(sisnr)
         self.result["std"] = np.std(sisnr)
 
+# from pesq import pesq
+# from pystoi import stoi
+
+# class Pesq(Metric):
+#     name = "Pesq"
+
+#     def better(self, first, second):
+#         return first > second
+
+#     def _compute(self, samples, real_samples, epoch_num, epoch_info):
+#         pesq_=np.array(samples.shape[1])
+#         for i in samples:
+#             pesq_[i]=pesq(16000, real_samples[i].cpu().numpy(),
+#                         samples[i].cpu().numpy(),
+#                         mode="wb",
+#                     )
+
+#         self.result["mean"] = np.mean(sisnr)
+#         self.result["std"] = np.std(sisnr)
+
 
 class MOSNet(Metric):
     name = "MOSNet"
