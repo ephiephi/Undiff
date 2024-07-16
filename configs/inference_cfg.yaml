@@ -17,3 +17,5 @@ y_noisy: "/data/ephraim/datasets/known_noise/exp3b/noisy_wav/digits_snr5_power0.
 outpath: /data/ephraim/datasets/known_noise/undiff/exp3b/enhanced/
 clean_wav: null
 s_schedule: null
+noise_type: loss_model
+noise_model_path: /data/ephraim/repos/Pytorch-VAE-tutorial/exp1.pickle
