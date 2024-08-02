@@ -17,11 +17,17 @@ from DNSMOS import dnsmos_local
 
 from tqdm import tqdm
 
-noisy_dir = "/data/ephraim/datasets/known_noise/sgmse/exp_i/noisy_synth_i95/"
-clean_dir = "/data/ephraim/datasets/known_noise/sgmse/exp_i/clean_synth_i95/"
+# noisy_dir = "/data/ephraim/datasets/known_noise/sgmse/exp_i/noisy_synth_i95/"
+# clean_dir = "/data/ephraim/datasets/known_noise/sgmse/exp_i/clean_synth_i95/"
+# root = Path("/data/ephraim/datasets/known_noise/sgmse/exp_i/")
+# models = ["sgmse_WSJ0Chime3", "sgmse_TIMITChime3","storm_TIMITChime3","storm_vbd"]
+# enhanced_dirs = [str(root/model_/"enhanced/") for model_ in models]
+
+noisy_dir = "/data/ephraim/datasets/known_noise/sgmse/exp_i/noisy_i_real/"
+clean_dir = "/data/ephraim/datasets/known_noise/sgmse/exp_i/clean_i_real/"
 root = Path("/data/ephraim/datasets/known_noise/sgmse/exp_i/")
 models = ["sgmse_WSJ0Chime3", "sgmse_TIMITChime3","storm_TIMITChime3","storm_vbd"]
-enhanced_dirs = [str(root/model_/"enhanced/") for model_ in models]
+enhanced_dirs = [str(root/model_/"enhanced_real/") for model_ in models]
 
 print(enhanced_dirs)
 
@@ -52,7 +58,9 @@ for enhanced_dir in tqdm(enhanced_dirs):
             metrics["dir"] = str(Path(ours).name).split("_")[0]
             metrics["snr"] = str(Path(ours).name).split("snr")[1].split("/")[0]
             if "noise" in Path(ours).name:
-                metrics["noise_type"] = ours.split("noise")[1].split("_")[0]
+                print("noise")
+                metrics["noise_type"] = Path(ours).name.split("noise")[1].split("_")[0]
+                # print(Path(ours).name.split("noise")[1].split("_")[0])
             # Print metrics
             # print(metrics)
             data.append(metrics)

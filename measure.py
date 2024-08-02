@@ -129,10 +129,7 @@ def calc_measures(noisy_dir, clean_dir, enhance_dir):
                     WAVEFORM_enhanced = WAVEFORM_enhanced[:, : WAVEFORM_SPEECH.shape[1]]
                 else:
                     WAVEFORM_SPEECH = WAVEFORM_SPEECH[:, : WAVEFORM_enhanced.shape[1]]
-                if WAVEFORM_NOISE.shape[1] < WAVEFORM_enhanced.shape[1]:
-                        WAVEFORM_enhanced = WAVEFORM_enhanced[:, : WAVEFORM_NOISE.shape[1]]
-                else:
-                    WAVEFORM_NOISE = WAVEFORM_NOISE[:, : WAVEFORM_enhanced.shape[1]]
+                
                 
                 pesq_enhanced_array[i] = pesq(
                     16000,
@@ -160,6 +157,10 @@ def calc_measures(noisy_dir, clean_dir, enhance_dir):
         # print("speechshape: ", WAVEFORM_SPEECH.shape)
         # print("enhancedshape: " , WAVEFORM_enhanced.shape)
         try:
+            if WAVEFORM_NOISE.shape[1] < WAVEFORM_SPEECH.shape[1]:
+                        WAVEFORM_enhanced = WAVEFORM_SPEECH[:, : WAVEFORM_NOISE.shape[1]]
+            else:
+                WAVEFORM_NOISE = WAVEFORM_NOISE[:, : WAVEFORM_SPEECH.shape[1]]
             pesq_noise = pesq(
                 16000,
                 WAVEFORM_SPEECH[0].numpy(),
