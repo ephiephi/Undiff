@@ -23,11 +23,19 @@ from tqdm import tqdm
 # models = ["sgmse_WSJ0Chime3", "sgmse_TIMITChime3","storm_TIMITChime3","storm_vbd"]
 # enhanced_dirs = [str(root/model_/"enhanced/") for model_ in models]
 
-noisy_dir = "/data/ephraim/datasets/known_noise/sgmse/exp_i/noisy_i_real/"
-clean_dir = "/data/ephraim/datasets/known_noise/sgmse/exp_i/clean_i_real/"
-root = Path("/data/ephraim/datasets/known_noise/sgmse/exp_i/")
-models = ["sgmse_WSJ0Chime3", "sgmse_TIMITChime3","storm_TIMITChime3","storm_vbd"]
-enhanced_dirs = [str(root/model_/"enhanced_real/") for model_ in models]
+# noisy_dir = "/data/ephraim/datasets/known_noise/sgmse/exp_i/noisy_i_real/"
+# clean_dir = "/data/ephraim/datasets/known_noise/sgmse/exp_i/clean_i_real/"
+# root = Path("/data/ephraim/datasets/known_noise/sgmse/exp_i/")
+# models = ["sgmse_WSJ0Chime3", "sgmse_TIMITChime3","storm_TIMITChime3","storm_vbd"]
+# enhanced_dirs = [str(root/model_/"enhanced_real/") for model_ in models]
+
+
+noisy_dir = "/data/ephraim/datasets/known_noise/sgmse/g_high/noisy_g_09/"
+clean_dir = "/data/ephraim/datasets/known_noise/sgmse/g_high/clean_g_09"
+root = Path("/data/ephraim/datasets/known_noise/sgmse/g_high/")
+models = [ "sgmse_TIMITChime3","storm_TIMITChime3"]
+enhanced_dirs = [str(root/model_/"enhanced/") for model_ in models]
+
 
 print(enhanced_dirs)
 

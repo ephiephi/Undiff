@@ -215,6 +215,7 @@ def train_nets(train_dataset, test_dataset,epochs=6000):
         model.train()
 
         optimizer = optim.Adam(model.parameters())
+
         for epoch in range(epochs):
             running_loss = 0.0
             # for batch_idx, (batch_tensor, gt_tensor) in enumerate(train_loader):
@@ -235,7 +236,7 @@ def train_nets(train_dataset, test_dataset,epochs=6000):
             running_loss += loss.item()
                 
                 
-            if epochs%100==0:
+            if epoch%100==0:
                 with torch.no_grad():
                     test_inputs, gt_test = test_dataset.__getitem__(i)
                     test_inputs = test_inputs.view(1,1,-1).to("cuda", dtype=torch.float)

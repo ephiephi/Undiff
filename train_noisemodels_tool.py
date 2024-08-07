@@ -534,6 +534,7 @@ def train_nets_parralel(train_dataset, test_dataset,trial=0, epochs=100,num_nets
 if __name__ == "__main__":
     print("starting ----")
     root = "/data/ephraim/datasets/known_noise/undiff/exp_ar_i_real/"
+    
 
     with open(Path(root)/'5f_snrs.pickle', 'rb') as handle:
         snr_df = pickle.load(handle)

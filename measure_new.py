@@ -16,14 +16,16 @@ from asteroid.metrics import get_metrics
 from DNSMOS import dnsmos_local
 
 
-def main_measure(exp_dir):
-    enhanced_dir =  Path(exp_dir)/"enhanced_60"
+def main_measure(exp_dir,enhanced_dirname="enhanced_60"):#
+    enhanced_dir =  Path(exp_dir)/enhanced_dirname
     clean_dir = Path(exp_dir)/"clean_wav"
     noisy_dir =  Path(exp_dir)/"noisy_wav"
     snr_dirs = glob(os.path.join(enhanced_dir,"*/"))
     df = calc_measures(exp_dir,enhanced_dir,clean_dir,noisy_dir,snr_dirs)
     
     stats_path =os.path.join(exp_dir, "measures.pickle")
+    if enhanced_dirname!="enhanced_60":
+        stats_path =os.path.join(exp_dir, f"measures_{enhanced_dirname}.pickle")
     with open(stats_path, "wb") as f:
         pickle.dump(df, f, protocol=pickle.HIGHEST_PROTOCOL)
 
@@ -105,9 +107,14 @@ if __name__ == "__main__":
         "-exp_dir",
         default="/data/ephraim/datasets/known_noise/undiff/exp_ar_i_095/c/",
     )
+    parser.add_argument(
+        "-enhanced_dirname",
+        default="enhanced_60",
+    )
 
 
     args = parser.parse_args()
     main_measure(
         args.exp_dir,
+        args.enhanced_dirname,
     )

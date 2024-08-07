@@ -589,7 +589,7 @@ class GaussianDiffusion:
 
             
             if noise_type == "loss_model":
-                
+                print("--------loss_model----------")
                 with torch.enable_grad():
                     x_t = cur_mean[:].detach()#.requires_grad_(True)
                     noise_model = noise_model.to("cuda")
@@ -613,6 +613,29 @@ class GaussianDiffusion:
                     # else:
                     #     n_t_normed = n_t
                     # torchaudio.save(tarpath, n_t_normed.to("cpu").view(1,-1), 16000)
+            elif noise_type == "freq_gaussian":
+                with torch.enable_grad():
+                    n_fft,hop_length,win_length,window = noise_model["params"]
+                    window = window.to("cuda")
+                    mu, sig = noise_model["stats"]
+                    mu = mu.to("cuda")
+                    sig = sig.to("cuda")
+                    
+                    x_t = cur_mean[:]
+                    x_t = x_t.requires_grad_(True)
+                    n_t = y_noisy - c3 * x_t
+                    
+                    stft_nt = torch.stft(n_t.view(-1), n_fft=n_fft, hop_length=hop_length, win_length=win_length, window=window, return_complex=True)
+                    # print("stft_nt:", stft_nt)
+                    # magnitude_nt
+                    magnitude_nt = torch.abs(stft_nt)
+                    # print("magnitude_nt:", magnitude_nt)
+                    log_p = -(1/2)*(torch.square(magnitude_nt.T-mu)/torch.square(sig))+torch.log(1/(np.sqrt(2*np.pi)*sig))
+                    log_p_sum = torch.sum(log_p)
+                    loss = log_p_sum
+                    # print("x_t: ", x_t)
+                    # print("log_p_sum: ", log_p_sum)
+                    grad_log_p = torch.autograd.grad(log_p_sum, x_t)[0]
             else: 
                 grad_log_p = c3 * (y_noisy - c3 * cur_mean) / (c4 + cur_noise_var) ** 2
             cur_mean = cur_mean + cur_s * sigma_t * grad_log_p.detach()
@@ -816,18 +839,34 @@ class GaussianDiffusion:
         if use_rg_bwe:
             rg_exps.add(TaskType.BWE)
 
-      
+
+        import io
+        class CPU_Unpickler(pickle.Unpickler):
+            def find_class(self, module, name):
+                if module == 'torch.storage' and name == '_load_from_bytes':
+                    return lambda b: torch.load(io.BytesIO(b), map_location='cuda:0')
+                else: return super().find_class(module, name)
+        
         if noise_model_path is not None:
-            with open(noise_model_path, 'rb') as handle:
-                params_dict = pickle.load(handle)
-                print("noise_model_path: ", noise_model_path)
-                noise_models = params_dict["nets"] 
-                # train_dataset = params_dict["train_dataset"]  
+            if noise_type=="loss_model":
+                with open(noise_model_path, 'rb') as handle:
+                    params_dict =  CPU_Unpickler(handle).load()
+                    # params_dict = pickle.load(handle)
+                    print("noise_model_path: ", noise_model_path)
+                    noise_models = params_dict["nets"] 
+                    # train_dataset = params_dict["train_dataset"]  
+            elif noise_type=="freq_gaussian":
+                with open(noise_model_path, 'rb') as handle:
+                    params_dict = pickle.load(handle)
+                    noise_models = params_dict["models"] 
         
         loss_array=[]
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
-            noise_model = noise_models[i]
+            if noise_models is not None:
+                noise_model = noise_models[i]
+                if noise_type=="loss_model":
+                    noise_model = noise_model.to(device)
             
             if sample_method in rg_exps:
                 img.requires_grad_(True)
