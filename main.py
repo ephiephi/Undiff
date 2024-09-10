@@ -18,6 +18,10 @@ import torch
 import numpy as np
 
 
+from torch.nn.modules.utils import _pair
+from torch import nn
+import torch.nn.functional as F
+
 class NoiseDataset(Dataset):
     def __init__(self, data_tensor, gt_tensor):
         self.data_tensor =data_tensor
@@ -31,6 +35,93 @@ class NoiseDataset(Dataset):
         cur_gt = self.gt_tensor[idx]
         return item, cur_gt
     
+
+class CausalConv2d(nn.Conv2d):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=None, dilation=1, groups=1, bias=True):
+        # kernel_size = (kernel_size[0],kernel_size[1])
+        stride = _pair(stride)
+        dilation = (dilation,1)
+        # print("dilation:", dilation)
+        if padding is None:
+            padding = int((kernel_size[1] -1) * dilation[1] +1) 
+        else:
+           padding = padding * 2
+        # print("padding:",padding)
+        self._pad= (padding)
+        self._pad_h =   int(np.floor(kernel_size[0]/2))
+        super().__init__(in_channels, out_channels, kernel_size, stride=stride, padding=0, dilation=dilation, groups=groups, bias=bias)
+    def forward(self, inputs):
+        # print("inputs.shape:",inputs.shape)
+        inputs = F.pad(inputs, (self._pad, 0,self._pad_h , self._pad_h))
+        output = super().forward(inputs)
+        if self._pad != 0:
+            output = output[:, :, :-1]
+        return output
+    
+    
+class NetworkFreq(nn.Module):
+    def __init__(self, kernel_size=(11,5)):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.pad_h = int(np.floor(kernel_size[0]/2))
+        dilation=(1,1)
+        self.padding = int((kernel_size[1] -1) * dilation[1] +1)
+        # BCHW - https://discuss.pytorch.org/t/applying-separate-convolutions-to-each-row-of-input/152597
+        # grouped_conv = CausalConv2d(H * C, H * C, kernel_size = k, groups = H)
+        self.conv1 = CausalConv2d(257, 257*2, kernel_size=kernel_size, groups=257)
+        
+        self.tanh = nn.Tanh()
+        self.conv2 = CausalConv2d(257*2, 257*2, kernel_size=kernel_size, groups=257)
+
+
+    def forward(self, x, cur_gt):
+        
+        assert len(x.shape) ==4
+        B = x.shape[0]
+        C = x.shape[1]
+        H = x.shape[2]
+        W = x.shape[3]
+        # print("B,C,H:", B,C,H)
+        # print("input.shape: ", input.shape)
+        x = self.conv1(x.transpose(1, 2).reshape (H * C ,B, -1))
+        x = x.reshape (B, H, C*2, W).transpose (1, 2)
+        identity = x
+        x = self.tanh(x)
+        x = self.conv2(x.transpose(1, 2).reshape (2*H * C ,B, -1))
+        x = x.reshape (B, H, C*2, W).transpose (1, 2)
+        x = x + identity
+
+        means = x[:,0,:,:]
+        log_var = x[:,1,:,:]
+        stds = torch.exp(0.5 *log_var)
+        return means, stds
+    
+    def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
+        # print("wav_tensor.shape ", wav_tensor.squeeze().shape)
+        padding = self.padding
+        wav_tensor = wav_tensor.squeeze()[self.pad_h:-self.pad_h,padding:]
+        means_=expected_means.squeeze()[self.pad_h:-self.pad_h,padding:]
+        stds_ = expected_stds.squeeze()[self.pad_h:-self.pad_h,padding:]
+        # print("wav_tensor shape: ", wav_tensor.shape)
+        # print("means_ shape: ", means_.shape)
+        # print("stds_ shape: ", stds_.shape)
+        eps = 0.000000001
+        exp_all = -(1/2)*((torch.square(wav_tensor-means_)/(torch.square(stds_)+eps)))
+        param_all = 1/(np.sqrt(2*np.pi)*stds_+eps)
+
+        model_likelihood1 = torch.mean(torch.sum(torch.log(param_all),axis=1)) #, axis=-1 
+        model_likelihood2 = torch.mean(torch.sum(exp_all,axis=1)) #, axis=-1
+
+        if verbose:
+            print("model_likelihood1: ", model_likelihood1)
+            print("model_likelihood2: ", model_likelihood2)
+        return model_likelihood1 + model_likelihood2
+    
+    def casual_loss(self, expected_means, expected_stds, wav_tensor):
+        model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
+        return -model_likelihood
+
+
 
 def CausalConv1d(in_channels, out_channels, kernel_size, dilation=1, **kwargs):
    pad = (kernel_size - 1) * dilation +1

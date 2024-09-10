@@ -391,8 +391,18 @@ def train_nets(train_dataset, test_dataset,epochs=6000):
 # def create_noisy_files(root):
     
 def create_dataset_real(noise_whole, sr):
-    noise_sample1 = noise_whole[:, 0:int(sr/2)]
-    noise_sample2 = noise_whole[:, int(sr/2):sr]
+    # noise_sample1 = noise_whole[:, 0:int(sr/2)]
+    # noise_sample2 = noise_whole[:, int(sr/2):sr]
+    # noise_sample1 = noise_whole[:, -int(sr/2):]
+    # noise_sample2 = noise_whole[:, -sr:-int(sr/2)]
+    
+    # noise_sample1 = noise_whole[:, 0:int(5*sr)]
+    # noise_sample2 = noise_whole[:, int(5*sr):int(10*sr)]
+    
+    noise_sample1 = noise_whole[:, int(3*sr):int(5*sr)]
+    noise_sample2 = noise_whole[:,  int(1*sr):int(3*sr)]
+    print("noise_sample2.shape:", noise_sample2.shape)
+    
 
     # Create datasets and data loaders
     train_tensor = torch.tensor(noise_sample1, dtype=torch.float32).view(1,1,-1)
@@ -493,6 +503,7 @@ def train_nets_process(train_dataset, test_dataset, device, idxes,trial, epochs=
                     test_inputs, gt_test = test_dataset.__getitem__(i)
                     test_inputs = test_inputs.view(1,1,-1).to(device, dtype=torch.float)
                     gt_test = gt_test.to(device, dtype=torch.float)
+                    # print("test_inputs shape: ", test_inputs.shape)
                     meanst, stdst = model(test_inputs, gt_test)
                 loss_t = model.casual_loss( meanst, stdst, wav_tensor=test_inputs)
                 if i in loss_test_array:
@@ -515,16 +526,18 @@ def train_nets_process(train_dataset, test_dataset, device, idxes,trial, epochs=
 
 def train_nets_parralel(train_dataset, test_dataset,trial=0, epochs=100,num_nets=200):
     results = []
-    idxes_all = [list(range(0,50)),list(range(50,100)),list(range(100,150)),list(range(150,200))]
-    devices = [f'cuda:{i}' for i in range(4)]
+    gpu_num=2
+    # idxes_all = [list(range(0,50)),list(range(50,100)),list(range(100,150)),list(range(150,200))]
+    idxes_all = [list(range(0,100)),list(range(100,200))]
+    devices = [f'cuda:{i}' for i in range(gpu_num)]
     with mp.get_context('spawn').Pool(processes=4) as pool:
-        args = [(train_dataset, test_dataset,devices[i % 4], idxes, trial,epochs) for i, idxes in enumerate(idxes_all)]
+        args = [(train_dataset, test_dataset,devices[i % gpu_num], idxes, trial,epochs) for i, idxes in enumerate(idxes_all)]
         results = pool.starmap(train_nets_process, args)
 
     loss_array= results[0][1]
     loss_test_array = results[0][2]
     nets = results[0][0]
-    for i in range(1,4):
+    for i in range(1,gpu_num):
         nets.extend(results[i][0])
         loss_array.update(results[i][1])
         loss_test_array.update(results[i][2])
@@ -533,7 +546,12 @@ def train_nets_parralel(train_dataset, test_dataset,trial=0, epochs=100,num_nets
 
 if __name__ == "__main__":
     print("starting ----")
-    root = "/data/ephraim/datasets/known_noise/undiff/exp_ar_i_real/"
+    # root = "/data/ephraim/datasets/known_noise/undiff/exp_ar_i_real/"
+    # root = "/data/ephraim/datasets/known_noise/undiff/exp_ar_i_real_end/"
+    # root = "/data/ephraim/datasets/known_noise/undiff/exp_ar_i_real_middle/"
+    # root = "/data/ephraim/datasets/known_noise/undiff/exp_ar_j_real/"
+    root = "/data/ephraim/datasets/known_noise/undiff/exp_ar_j_real_2sec/"
+    print(root)
     
 
     with open(Path(root)/'5f_snrs.pickle', 'rb') as handle:
@@ -548,20 +566,30 @@ if __name__ == "__main__":
         #     break
     
     failed = {}
-    i=snr_df[snr_df["dir"]=="b"].index[2]
+    # i=snr_df[snr_df["dir"]=="b"].index[2]
+    # snr_df2 = snr_df[(snr_df["dir"]=="b") | (snr_df["dir"]=="a") | (snr_df["dir"]=="c")]
+    snr_df2 = snr_df[(snr_df["dir"]=="b") | (snr_df["dir"]=="a") | (snr_df["dir"]=="c")]
     # for trial in [3,1,2]:
-    for i in snr_df.index:
-        if i >1:
-            break
+    for i in snr_df2.index:
+        # if i >1:
+        #     break
         for trial in [0]:
-
+            
         # for i in snr_df.index:
         #     print(i)
         # raise Exception
             
                 
             train_idx = i
+            cur_snr = snr_df["snr"][train_idx]
+            if cur_snr != 5.0:
+                print(cur_snr, "continue")
+                continue
+            
             noise_idx = snr_df["noise_idx"][train_idx]
+            if noise_idx!="Babble":
+                print("noise_idx", noise_idx)
+                continue
             cur_dir = Path(root)/ snr_df["dir"][train_idx]
             print(f"______{cur_dir}_______")
 
@@ -584,9 +612,10 @@ if __name__ == "__main__":
             # params_dict = {"result": result}
             params_dict_debug = {"nets": nets, "train_dataset": train_dataset, "test_dataset": test_dataset,"ar_coefs":None, "loss_array":loss_array, "loss_test_array": loss_test_array, "ar_noise": noise_sample1, "noise_scaling": cur_noise_scaling, "snr": str(int(cur_snr)), "noise_name": noise_idx, "noise_path": noise_path}
             
-            pickle_path = cur_dir/(str(trial)+"_"+"snr"+str(int(cur_snr))+"_"+str(noise_index)+"_models.pickle")
+            #save in name of 0
+            pickle_path = cur_dir/(str(0)+"_"+"snr"+str(int(cur_snr))+"_"+str(noise_index)+"_models.pickle")
 
-            tmp_pickle_path = cur_dir/(str(trial)+"_"+"tmp_"+"snr"+str(int(cur_snr))+"_"+str(noise_index)+"_models.pickle")
+            tmp_pickle_path = cur_dir/(str(0)+"_"+"tmp_"+"snr"+str(int(cur_snr))+"_"+str(noise_index)+"_models.pickle")
 
             try:
                 with open(pickle_path, 'wb') as handle:
@@ -604,5 +633,8 @@ if __name__ == "__main__":
     print("failed: ", failed)
     print(pickle_path)
     
-    # command = "python run_exp_ar_i_95.py"
+    
+    
+    
+    # command = "python run_exp_ar_i_middle_real1short.py"
     # os.system(command)
