@@ -91,7 +91,8 @@ class UnconditionalTask(AbstractTask):
         clean_wav=None,
         s_schedule=None,
         noise_type=None, 
-        noise_model_path=None
+        noise_model_path=None,
+        l_low=0.2,
     ):
         assert self.task_type == TaskType.UNCONDITIONAL
         fake_samples = []
@@ -117,7 +118,8 @@ class UnconditionalTask(AbstractTask):
                 y_noisy=y_noisy,
                 s_schedule=s_schedule,
                 noise_type=noise_type, 
-                noise_model_path=noise_model_path
+                noise_model_path=noise_model_path,
+                l_low=l_low,
             ).cpu()
 
             fake_samples.append(sample)

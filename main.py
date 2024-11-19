@@ -127,6 +127,95 @@ def CausalConv1d(in_channels, out_channels, kernel_size, dilation=1, **kwargs):
    pad = (kernel_size - 1) * dilation +1
    return nn.Conv1d(in_channels, out_channels, kernel_size, padding=pad, dilation=dilation, **kwargs)
 
+
+class CausalConv1dClass(nn.Conv1d):
+    def __init__(self,in_channels, out_channels, kernel_size, dilation=1, **kwargs):
+        pad = (kernel_size - 1) * dilation +1
+        super().__init__(in_channels, out_channels, kernel_size, padding=pad, dilation=dilation, **kwargs)
+    
+    def forward(self, inputs):
+        output = super().forward(inputs)
+        if self.padding[0] != 0:
+            output = output[:, :, :-self.padding[0]-1]
+        return output
+
+
+class NetworkLong(nn.Module):
+    def __init__(self, kernel_size=50):
+        super().__init__()   
+        self.conv0 = CausalConv1dClass(1, 2, kernel_size=kernel_size, dilation=10)
+        self.tanh0 = nn.Tanh()
+        self.tanh0_1 = nn.Tanh()
+        self.sig0 = nn.Sigmoid()
+        self.conv1 = CausalConv1dClass(1, 2, kernel_size=kernel_size, dilation=1)
+        self.tanh = nn.Tanh()
+        self.tanh1_1 = nn.Tanh()
+        self.sig1 = nn.Sigmoid()
+        self.conv2 = CausalConv1dClass(2, 2, kernel_size=kernel_size, dilation=2)
+        self.tanh2 = nn.Tanh()
+        self.tanh2_1 = nn.Tanh()
+        self.sig2 = nn.Sigmoid()
+        self.conv3 = CausalConv1dClass(2, 2, kernel_size=kernel_size, dilation=4)
+        self.tanh3 = nn.Tanh()
+        self.tanh3_1 = nn.Tanh()
+        self.sig3 = nn.Sigmoid()
+        self.conv4 = CausalConv1dClass(2, 2, kernel_size=kernel_size, dilation=8)
+        self.param = nn.Parameter(torch.randn(1))
+        
+        # fc_layer = nn.Linear(in_features=128, out_features=64)
+
+    def forward(self, x, cur_gt):
+        input = x[:]
+        x1 = self.conv0(x)
+        
+        x = self.conv1(x)
+
+        identity=x[:]
+        x = x+x1
+        x = self.tanh(x)
+        x = self.conv2(x)
+
+        identity2=x[:]
+        x = identity+x
+        x = self.tanh2(x)
+        x = self.conv3(x)
+
+        identity3=x[:]
+        x = x+identity2+identity
+        x = self.tanh3(x)
+        x = self.conv4(x)
+
+        x = x+identity2+identity+identity3
+
+        means = x[:,0,:]
+        log_var = x[:,1,:]
+        stds = torch.exp(0.5 *log_var)
+
+        return means, stds
+    
+    def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
+        wav_tensor = wav_tensor.squeeze()
+        means_=expected_means.squeeze()
+        stds_ = expected_stds.squeeze()
+
+        exp_all = -(1/2)*((torch.square(wav_tensor-means_)/torch.square(stds_)))
+        param_all = 1/(np.sqrt(2*np.pi)*stds_)
+        model_likelihood1 = torch.sum(torch.log(param_all), axis=-1) 
+        model_likelihood2 = torch.sum(exp_all, axis=-1) 
+
+        if verbose:
+            print("model_likelihood1: ", model_likelihood1)
+            print("model_likelihood2: ", model_likelihood2)
+        
+            
+        return model_likelihood1 + model_likelihood2
+    
+    def casual_loss(self, expected_means, expected_stds, wav_tensor):
+        model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
+        loss3 = torch.sum(expected_stds,axis=-1)
+        return -model_likelihood + self.param*loss3/wav_tensor.shape[-1]
+
+
 class Network(nn.Module):
     def __init__(self):
         super().__init__()
@@ -143,21 +232,15 @@ class Network(nn.Module):
         return means, stds
     
     def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
-        # model_likelihood=0
         wav_tensor = wav_tensor.squeeze()
         means_=expected_means.squeeze()
         stds_ = expected_stds.squeeze()
-        # for i in range(len(wav_tensor)):
-        #     exp_ = torch.exp(-(1/(2*stds_[i]**2))*(wav_tensor[i]-means_[i])**2)
-        #     param_ = 1/(np.sqrt(2*np.pi)*stds_[i])
-        #     model_likelihood_dot += torch.log(exp_*param_)
+
         exp_all = -(1/2)*((torch.square(wav_tensor-means_)/torch.square(stds_)))
         param_all = 1/(np.sqrt(2*np.pi)*stds_)
         model_likelihood1 = torch.sum(torch.log(param_all), axis=-1) 
         model_likelihood2 = torch.sum(exp_all, axis=-1) 
 
-        # model_likelihood2 = torch.sum(torch.log(1/(np.sqrt(2*np.pi)*stds_)), axis=-1) 
-        # model_likelihood = model_likelihood + model_likelihood2
         if verbose:
             print("model_likelihood1: ", model_likelihood1)
             print("model_likelihood2: ", model_likelihood2)
@@ -166,7 +249,90 @@ class Network(nn.Module):
     def casual_loss(self, expected_means, expected_stds, wav_tensor):
         model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
         return -model_likelihood
+
+# class Network(nn.Module):
+#     def __init__(self, cutoff=6000,high=True, kernel_size=5):
+#         self.high = high
+#         self.cutoff = cutoff
+#         super().__init__()
+#         self.conv1 = CausalConv1d(1, 2, kernel_size=kernel_size, dilation=1)
+
+#     def forward(self, x, cur_gt):
+#         x = self.conv1(x)
+#         # print("self.conv1.padding: ", self.conv1.padding)
+#         if self.conv1.padding[0] != 0:
+#             x = x[:, :, :-self.conv1.padding[0]-1]  # remove trailing padding
+#         means = x[:,0,:]
+#         log_var = x[:,1,:]
+#         stds = torch.exp(0.5 *log_var)
+#         return means, stds
     
+#     def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
+#         # model_likelihood=0
+#         wav_tensor = wav_tensor.squeeze()
+#         means_=expected_means.squeeze()
+#         stds_ = expected_stds.squeeze()
+#         if self.high:
+#             wav_tensor = wav_tensor[self.cutoff:]
+#             means_=means_[self.cutoff:]
+#             stds_ = stds_[self.cutoff:]
+#         else:
+#             wav_tensor = wav_tensor[:self.cutoff]
+#             means_=means_[:self.cutoff]
+#             stds_ = stds_[:self.cutoff]
+#         exp_all = -(1/2)*((torch.square(wav_tensor-means_)/torch.square(stds_)))
+#         param_all = 1/(np.sqrt(2*np.pi)*stds_)
+#         model_likelihood1 = torch.sum(torch.log(param_all), axis=-1) 
+#         model_likelihood2 = torch.sum(exp_all, axis=-1) 
+
+#         # model_likelihood2 = torch.sum(torch.log(1/(np.sqrt(2*np.pi)*stds_)), axis=-1) 
+#         # model_likelihood = model_likelihood + model_likelihood2
+#         if verbose:
+#             print("model_likelihood1: ", model_likelihood1)
+#             print("model_likelihood2: ", model_likelihood2)
+            
+#         return model_likelihood1 + model_likelihood2
+    
+#     def casual_loss(self, expected_means, expected_stds, wav_tensor):
+#         model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
+#         return -model_likelihood
+    
+
+class NetworkDivided(nn.Module):
+    def __init__(self, kernel_size=5):
+        super().__init__()
+        self.conv1 = CausalConv1d(1, 2, kernel_size=kernel_size, dilation=1)
+
+    def forward(self, x, cur_gt):
+        x = self.conv1(x)
+        # print("self.conv1.padding: ", self.conv1.padding)
+        if self.conv1.padding[0] != 0:
+            x = x[:, :, :-self.conv1.padding[0]-1]  # remove trailing padding
+        means = x[:,0,:]
+        log_var = x[:,1,:]
+        stds = torch.exp(0.5 *log_var)
+        return means, stds
+    
+    def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
+        # model_likelihood=0
+        wav_tensor = wav_tensor.squeeze()
+        means_=expected_means.squeeze()
+        stds_ = expected_stds.squeeze()
+
+        exp_all = -(1/2)*((torch.square(wav_tensor-means_)/torch.square(stds_)))
+        param_all = 1/(np.sqrt(2*np.pi)*stds_)
+        model_likelihood1 = torch.sum(torch.log(param_all), axis=-1) 
+        model_likelihood2 = torch.sum(exp_all, axis=-1) 
+
+        if verbose:
+            print("model_likelihood1: ", model_likelihood1)
+            print("model_likelihood2: ", model_likelihood2)
+            
+        return model_likelihood1 + model_likelihood2
+    
+    def casual_loss(self, expected_means, expected_stds, wav_tensor):
+        model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
+        return -model_likelihood
 ########################
 
 def instantiate_model_and_diffusion(cfg, device):
@@ -221,7 +387,7 @@ def inference(cfg):
     )
 
     task.inference(
-        files_or_num, model, diffusion, cfg.sampling_rate, cfg.segment_size, DEVICE, cfg.guidance, cfg.guid_s, cfg.cur_noise_var,cfg.y_noisy, cfg.outpath, cfg.clean_wav, cfg.s_schedule, cfg.noise_type, cfg.noise_model_path
+        files_or_num, model, diffusion, cfg.sampling_rate, cfg.segment_size, DEVICE, cfg.guidance, cfg.guid_s, cfg.cur_noise_var,cfg.y_noisy, cfg.outpath, cfg.clean_wav, cfg.s_schedule, cfg.noise_type, cfg.noise_model_path, cfg.l_low
     )
 
 

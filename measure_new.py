@@ -21,10 +21,12 @@ def main_measure(exp_dir,enhanced_dirname="enhanced_60"):#
     clean_dir = Path(exp_dir)/"clean_wav"
     noisy_dir =  Path(exp_dir)/"noisy_wav"
     snr_dirs = glob(os.path.join(enhanced_dir,"*/"))
+    print(snr_dirs)
+    print(enhanced_dir)
     df = calc_measures(exp_dir,enhanced_dir,clean_dir,noisy_dir,snr_dirs)
     
     stats_path =os.path.join(exp_dir, "measures.pickle")
-    if enhanced_dirname!="enhanced_60":
+    if "enhanced_60" != enhanced_dirname:
         stats_path =os.path.join(exp_dir, f"measures_{enhanced_dirname}.pickle")
     with open(stats_path, "wb") as f:
         pickle.dump(df, f, protocol=pickle.HIGHEST_PROTOCOL)

@@ -19,3 +19,4 @@ clean_wav: null
 s_schedule: null
 noise_type: loss_model
 noise_model_path: /data/ephraim/repos/Pytorch-VAE-tutorial/exp1.pickle
+l_low: 0.2
