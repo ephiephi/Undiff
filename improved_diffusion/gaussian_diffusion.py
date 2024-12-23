@@ -21,6 +21,81 @@ import pickle
 from torch import nn
 from torch.utils.data import Dataset
 
+from torch.nn.modules.utils import _pair
+from torch import nn
+import torch.nn.functional as F
+
+
+from scipy.signal import firwin
+
+
+
+def calculate_rolling_std_with_means(audio_tensor, means_tensor, window_size=10):
+    """
+    Efficiently calculate the rolling standard deviation using precomputed rolling means.
+
+    Parameters:
+        audio_tensor (torch.Tensor): Input tensor of shape (1, n).
+        means_tensor (torch.Tensor): Precomputed rolling means tensor of shape (1, n).
+        window_size (int): The size of the sliding window (default is 10).
+
+    Returns:
+        torch.Tensor: Tensor of shape (1, n) with rolling standard deviations.
+    """
+    # Ensure the input is 2D
+    if len(audio_tensor.shape) != 2 or audio_tensor.shape[0] != 1:
+        raise ValueError("Input audio_tensor must be of shape (1, n)")
+    if len(means_tensor.shape) != 2 or means_tensor.shape[0] != 1:
+        raise ValueError("Input means_tensor must be of shape (1, n)")
+    if audio_tensor.shape != means_tensor.shape:
+        raise ValueError("audio_tensor and means_tensor must have the same shape")
+
+    n = audio_tensor.shape[1]
+    std_tensor = torch.zeros_like(audio_tensor)
+
+    # Flatten for efficient processing
+    audio_flat = audio_tensor.flatten()
+    means_flat = means_tensor.flatten()
+
+    # Compute cumulative sums of squared values
+    cumsum_sq = torch.cumsum(torch.cat((torch.tensor([0.0], device=audio_tensor.device), audio_flat**2)), dim=0)
+
+    if n >= window_size:
+        rolling_sum_sq = cumsum_sq[window_size:] - cumsum_sq[:-window_size]
+
+        # Compute variance using the formula Var = (E[X^2] - E[X]^2)
+        rolling_var = (rolling_sum_sq / window_size) - means_flat[window_size - 1:]**2
+        rolling_std = torch.sqrt(torch.clamp(rolling_var, min=0.0))  # Avoid negative due to precision issues
+
+        # Assign to the result for indices where full window is available
+        std_tensor[0, window_size - 1:] = rolling_std
+
+    # For the first `window_size - 1` elements, compute manually
+    for i in range(window_size - 1):
+        segment = audio_flat[max(0, i - window_size + 1): i + 1]
+        mean_segment = torch.mean(segment)
+        std_tensor[0, i] = torch.sqrt(torch.mean((segment - mean_segment)**2))
+
+    return std_tensor
+
+def fir_filter(tensor, high=False, cutoff=6000,num_taps=101,sr=16000):
+    cutoff_freq = cutoff  # Cutoff frequency for the high-pass filter in Hz
+    num_taps = num_taps  # Filter order (number of filter coefficients)
+    if high:
+        pass_zero = False
+    else:
+        pass_zero = True
+    coefficients = firwin(num_taps, cutoff=cutoff_freq, pass_zero=pass_zero, fs=sr)
+
+    # Convert filter coefficients to a PyTorch tensor
+    coefficients = torch.tensor(coefficients, dtype=torch.float32)
+
+    pad_length = (num_taps - 1) // 2
+    signal_padded = torch.nn.functional.pad(tensor.view(1, 1, -1), (pad_length, pad_length), mode='constant')
+
+    # Apply the FIR filter to the signal using convolution
+    filtered_signal = torch.nn.functional.conv1d(signal_padded.view(1, 1, -1).to("cuda"), coefficients.view(1, 1, -1).to("cuda"))
+    return filtered_signal
 
 class NoiseDataset(Dataset):
     def __init__(self, data_tensor, gt_tensor):
@@ -35,50 +110,66 @@ class NoiseDataset(Dataset):
         cur_gt = self.gt_tensor[idx]
         return item, cur_gt
 
-def CausalConv1d(in_channels, out_channels, kernel_size, dilation=1, **kwargs):
-   pad = (kernel_size - 1) * dilation +1
-   return nn.Conv1d(in_channels, out_channels, kernel_size, padding=pad, dilation=dilation, **kwargs)
+# def CausalConv1d(in_channels, out_channels, kernel_size, dilation=1, **kwargs):
+#    pad = (kernel_size - 1) * dilation +1
+#    return nn.Conv1d(in_channels, out_channels, kernel_size, padding=pad, dilation=dilation, **kwargs)
 
-class Network(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv1 = CausalConv1d(1, 2, kernel_size=3, dilation=1)
+# class Network(nn.Module):
+#     def __init__(self):
+#         super().__init__()
+#         self.conv1 = CausalConv1d(1, 2, kernel_size=3, dilation=1)
 
-    def forward(self, x, cur_gt):
-        x = self.conv1(x)
-        # print("self.conv1.padding: ", self.conv1.padding)
-        if self.conv1.padding[0] != 0:
-            x = x[:, :, :-self.conv1.padding[0]-1]  # remove trailing padding
-        means = x[:,0,:]
-        log_var = x[:,1,:]
-        stds = torch.exp(0.5 *log_var)
-        return means, stds
+#     def forward(self, x, cur_gt):
+#         x = self.conv1(x)
+#         # print("self.conv1.padding: ", self.conv1.padding)
+#         if self.conv1.padding[0] != 0:
+#             x = x[:, :, :-self.conv1.padding[0]-1]  # remove trailing padding
+#         means = x[:,0,:]
+#         log_var = x[:,1,:]
+#         stds = torch.exp(0.5 *log_var)
+#         return means, stds
     
-    def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
-        # model_likelihood=0
-        wav_tensor = wav_tensor.squeeze()
-        means_=expected_means.squeeze()
-        stds_ = expected_stds.squeeze()
-        # for i in range(len(wav_tensor)):
-        #     exp_ = torch.exp(-(1/(2*stds_[i]**2))*(wav_tensor[i]-means_[i])**2)
-        #     param_ = 1/(np.sqrt(2*np.pi)*stds_[i])
-        #     model_likelihood_dot += torch.log(exp_*param_)
-        exp_all = -(1/2)*((torch.square(wav_tensor-means_)/torch.square(stds_)))
-        param_all = 1/(np.sqrt(2*np.pi)*stds_)
-        model_likelihood1 = torch.sum(torch.log(param_all), axis=-1) 
-        model_likelihood2 = torch.sum(exp_all, axis=-1) 
+#     def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
+#         # model_likelihood=0
+#         wav_tensor = wav_tensor.squeeze()
+#         means_=expected_means.squeeze()
+#         stds_ = expected_stds.squeeze()
+#         # for i in range(len(wav_tensor)):
+#         #     exp_ = torch.exp(-(1/(2*stds_[i]**2))*(wav_tensor[i]-means_[i])**2)
+#         #     param_ = 1/(np.sqrt(2*np.pi)*stds_[i])
+#         #     model_likelihood_dot += torch.log(exp_*param_)
+#         exp_all = -(1/2)*((torch.square(wav_tensor-means_)/torch.square(stds_)))
+#         param_all = 1/(np.sqrt(2*np.pi)*stds_)
+#         model_likelihood1 = torch.sum(torch.log(param_all), axis=-1) 
+#         model_likelihood2 = torch.sum(exp_all, axis=-1) 
 
-        # model_likelihood2 = torch.sum(torch.log(1/(np.sqrt(2*np.pi)*stds_)), axis=-1) 
-        # model_likelihood = model_likelihood + model_likelihood2
-        if verbose:
-            print("model_likelihood1: ", model_likelihood1)
-            print("model_likelihood2: ", model_likelihood2)
-        return model_likelihood1 + model_likelihood2
+#         # model_likelihood2 = torch.sum(torch.log(1/(np.sqrt(2*np.pi)*stds_)), axis=-1) 
+#         # model_likelihood = model_likelihood + model_likelihood2
+#         if verbose:
+#             print("model_likelihood1: ", model_likelihood1)
+#             print("model_likelihood2: ", model_likelihood2)
+#         return model_likelihood1 + model_likelihood2
     
-    def casual_loss(self, expected_means, expected_stds, wav_tensor):
-        model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
-        return -model_likelihood
+#     def casual_loss(self, expected_means, expected_stds, wav_tensor):
+#         model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
+#         return -model_likelihood
     
+
+def calc_stft(tensor):
+    # Parameters
+    sample_rate = 16000  # Sample rate in Hz
+    n_fft = 512  # Number of FFT points
+    win_length = n_fft  # Window length
+    hop_length = int(win_length/2)  # Number of samples between frames
+    window = torch.hann_window(win_length).to("cuda")  # Window function
+
+    signal_ = tensor.view(-1)
+    duration = max(tensor.shape)
+
+    stft = torch.stft(signal_, n_fft=n_fft, hop_length=hop_length, win_length=win_length, window=window, return_complex=True)
+    return stft, duration, sample_rate
+
+
 
 def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
     """
@@ -497,7 +588,8 @@ class GaussianDiffusion:
         s_schedule=None,
         noise_type=None, 
         noise_model=None,
-        diffusion_idx=None
+        diffusion_idx=None,
+        l_low=0.8
     ): ########
         """
         Sample x_{t-1} from the model at the given timestep.
@@ -596,8 +688,78 @@ class GaussianDiffusion:
                     n_t = y_noisy - c3 * x_t
                     n_t = n_t.requires_grad_(True)
                     mu, sig = noise_model(n_t,"none" )
+                    
                     loss = noise_model.calc_model_likelihood(mu, sig, n_t).to("cuda")#.requires_grad_(True)
+                    # loss = loss*len()
                     grad_log_p = -c3 * torch.autograd.grad(loss, n_t)[0]
+            elif noise_type == "loss_model_sig10":
+                print("--------loss_model_sig10----------")
+                with torch.enable_grad():
+                    x_t = cur_mean[:].detach()#.requires_grad_(True)
+                    noise_model = noise_model.to("cuda")
+                    n_t = y_noisy - c3 * x_t
+                    n_t = n_t.requires_grad_(True)
+                    mu, sig = noise_model(n_t,"none" )
+                    new_sig = calculate_rolling_std_with_means(n_t.reshape(1,-1),mu.reshape(1,-1),window_size=3)
+                    
+                    loss = noise_model.calc_model_likelihood(mu, new_sig, n_t).to("cuda")#.requires_grad_(True)
+                    grad_log_p = -c3 * torch.autograd.grad(loss, n_t)[0]
+            elif noise_type == "loss_model_double":
+                print("-------- loss_model_double ----------")
+                with torch.enable_grad():
+                    x_t = cur_mean[:].detach()#.requires_grad_(True)
+                    noise_model_low, noise_model_high = noise_model
+                    noise_model_low = noise_model_low.to("cuda")
+                    noise_model_high = noise_model_high.to("cuda")
+                    
+                    x_t_1 = x_t[:].requires_grad_(True)
+                    x_t_2 = x_t[:].requires_grad_(True)
+                    n_t_1 = y_noisy - c3 * x_t_1
+                    n_t_2 = y_noisy - c3 * x_t_2
+                    # n_t.to("cuda")
+                    
+                    n_t_low = fir_filter(n_t_1, high=False).to("cuda")
+                    n_t_high = fir_filter(n_t_2, high=True).to("cuda") 
+                    
+                    def calc_grad_log_p(noise_model_, n_t_, x_t_):
+                        mu, sig = noise_model_(n_t_,"none" )
+                        loss = noise_model_.calc_model_likelihood(mu, sig, n_t_).to("cuda")
+                        grad_log_p = torch.autograd.grad(loss, x_t_)[0]
+                        return grad_log_p,loss
+
+                    grad_log_p_low,loss_low = calc_grad_log_p(noise_model_low, n_t_low, x_t_1)
+                    grad_log_p_high,loss_high = calc_grad_log_p(noise_model_high, n_t_high, x_t_2)
+                    l_high = 1 - l_low
+                    grad_log_p = l_low*grad_log_p_low + l_high*grad_log_p_high
+                    
+                    loss = (loss_low, loss_high)
+                    
+                    # x_t_low = fir_filter(x_t, high=False) #maybe problematic
+                    # x_t_high = fir_filter(x_t, high=True) #maybe x_t instead
+                    # x_t_low = x_t_low.requires_grad_(True)
+                    # x_t_high = x_t_high.requires_grad_(True)
+                    # y_noisy_low = fir_filter(x_t, high=False)
+                    # y_noisy_high = fir_filter(x_t, high=True)
+                    # n_t_low = y_noisy_low - c3 * x_t_low
+                    # n_t_high = y_noisy_high - c3 * x_t_high
+                    
+                    # def calc_grad_log_p(noise_model_, x_t_, n_t_):
+                    #     mu, sig = noise_model_(n_t_,"none" )
+                    #     loss = noise_model_.calc_model_likelihood(mu, sig, n_t_).to("cuda")
+                    #     grad_log_p =  torch.autograd.grad(loss, x_t_)[0]
+                    #     return grad_log_p,loss
+
+                    # grad_log_p_low,loss_low = calc_grad_log_p(noise_model_low, x_t_low,n_t_low)
+                    # grad_log_p_high,loss_high = calc_grad_log_p(noise_model_high, x_t_high,n_t_high)
+                    # l_high = 1 - l_low
+                    # grad_log_p = l_low*grad_log_p_low + l_high*grad_log_p_high
+                    
+                    # loss = (loss_low, loss_high)
+                    
+
+                    
+                    
+                    
                     # import os
                     # # base_root = "/data/ephraim/datasets/known_noise/undiff/exp_ar_5d/"
                     # base_root = "/data/ephraim/datasets/known_noise/undiff/exp_ar_g/"
@@ -617,9 +779,9 @@ class GaussianDiffusion:
                 with torch.enable_grad():
                     n_fft,hop_length,win_length,window = noise_model["params"]
                     window = window.to("cuda")
-                    mu, sig = noise_model["stats"]
+                    mu, stds = noise_model["stats"]
                     mu = mu.to("cuda")
-                    sig = sig.to("cuda")
+                    stds = stds.to("cuda")
                     
                     x_t = cur_mean[:]
                     x_t = x_t.requires_grad_(True)
@@ -628,14 +790,75 @@ class GaussianDiffusion:
                     stft_nt = torch.stft(n_t.view(-1), n_fft=n_fft, hop_length=hop_length, win_length=win_length, window=window, return_complex=True)
                     # print("stft_nt:", stft_nt)
                     # magnitude_nt
-                    magnitude_nt = torch.abs(stft_nt)
+                    magnitude_nt = torch.log(torch.abs(stft_nt))
                     # print("magnitude_nt:", magnitude_nt)
-                    log_p = -(1/2)*(torch.square(magnitude_nt.T-mu)/torch.square(sig))+torch.log(1/(np.sqrt(2*np.pi)*sig))
+                    log_p = -(1/2)*(torch.square(magnitude_nt.T-mu)/torch.square(stds))+torch.log(1/(np.sqrt(2*np.pi)*stds))
                     log_p_sum = torch.sum(log_p)
                     loss = log_p_sum
-                    # print("x_t: ", x_t)
-                    # print("log_p_sum: ", log_p_sum)
                     grad_log_p = torch.autograd.grad(log_p_sum, x_t)[0]
+            elif noise_type == "freq_gaussian_nolog":
+                with torch.enable_grad():
+                    n_fft,hop_length,win_length,window = noise_model["params"]
+                    window = window.to("cuda")
+                    mu, stds = noise_model["stats"]
+                    mu = mu.to("cuda")
+                    stds = stds.to("cuda")
+                    
+                    x_t = cur_mean[:]
+                    x_t = x_t.requires_grad_(True)
+                    n_t = y_noisy - c3 * x_t
+                    
+                    stft_nt = torch.stft(n_t.view(-1), n_fft=n_fft, hop_length=hop_length, win_length=win_length, window=window, return_complex=True)
+                    # print("stft_nt:", stft_nt)
+                    # magnitude_nt
+                    magnitude_nt = (torch.abs(stft_nt))
+                    # print("magnitude_nt:", magnitude_nt)
+                    log_p = -(1/2)*(torch.square(magnitude_nt.T-mu)/torch.square(stds))+torch.log(1/(np.sqrt(2*np.pi)*stds))
+                    log_p_sum = torch.sum(log_p)
+                    loss = log_p_sum
+                    grad_log_p = torch.autograd.grad(log_p_sum, x_t)[0]
+            elif noise_type == "freq_gaussian_complex":
+                with torch.enable_grad():
+                    n_fft,hop_length,win_length,window = noise_model["params"]
+                    window = window.to("cuda")
+                    stds_re, stds_im,means_re,means_im = noise_model["stats"]
+                    stds_re = stds_re.to("cuda")
+                    stds_im = stds_im.to("cuda")
+                    means_re = means_re.to("cuda")
+                    means_im = means_im.to("cuda")
+                    # print("stds_re[:2] ", stds_re[:2])
+                    # print("means_im[:2] ", means_im[:2])
+                    x_t = cur_mean[:]
+                    x_t = x_t.requires_grad_(True)
+                    n_t = y_noisy - c3 * x_t
+                    
+                    stft_nt = torch.stft(n_t.view(-1), n_fft=n_fft, hop_length=hop_length, win_length=win_length, window=window, return_complex=True)
+                    eps = 0.000000000001
+                    log_p_re = -(1/2)*(torch.square(stft_nt.T.real-means_re)/(torch.square(2*(stds_re/2)**2+eps)))+torch.log(1/(np.sqrt(2*np.pi)*stds_re/(2**0.5)+eps))
+                    log_p_im = -(1/2)*(torch.square(stft_nt.T.imag-means_im)/(torch.square(2*(stds_im/2)**2+eps)))+torch.log(1/(np.sqrt(2*np.pi)*stds_im/(2**0.5)+eps))
+                    log_p = log_p_re+log_p_im
+                    # print("log_p_im[0,0]: ", log_p_im[0,0])
+                    # print("log_p_re[0,0]: ", log_p_re[0,0])
+                    log_p_sum = torch.mean(torch.sum(log_p, axis=0))
+                    loss = log_p_sum
+                    grad_log_p = torch.autograd.grad(log_p_sum, x_t)[0]
+            elif noise_type == "freq_nn":
+                with torch.enable_grad():
+                    noise_model = noise_model.to("cuda")
+                    x_t = cur_mean[:]
+                    x_t = x_t.requires_grad_(True)
+                    n_t = y_noisy - c3 * x_t
+                    
+                    stft_nt, duration, sample_rate = calc_stft(n_t.view(1,-1))
+                    magnitude_nt = (torch.abs(stft_nt)).view(1,1,stft_nt.shape[0],stft_nt.shape[1]) #no log
+                    
+                    mu, sig = noise_model(magnitude_nt,"none" )
+                    loss = noise_model.calc_model_likelihood(mu, sig, magnitude_nt).to("cuda")
+                    print("t: ", t)
+                    loss = loss*0.0001
+                    # else:
+                    #     loss = loss*0.001
+                    grad_log_p = torch.autograd.grad(loss, x_t)[0]
             else: 
                 grad_log_p = c3 * (y_noisy - c3 * cur_mean) / (c4 + cur_noise_var) ** 2
             cur_mean = cur_mean + cur_s * sigma_t * grad_log_p.detach()
@@ -686,7 +909,8 @@ class GaussianDiffusion:
         y_noisy=None,
         s_schedule=None,
         noise_type=None, 
-        noise_model_path=None
+        noise_model_path=None,
+        l_low=0.2,
     ):
         """
         Generate samples from the model.
@@ -735,7 +959,8 @@ class GaussianDiffusion:
             y_noisy=y_noisy,
             s_schedule=s_schedule,
             noise_type=noise_type, 
-            noise_model_path=noise_model_path
+            noise_model_path=noise_model_path,
+            l_low=l_low,
         ):
             final = sample
 
@@ -766,7 +991,8 @@ class GaussianDiffusion:
         y_noisy=None,
         s_schedule=None,
         noise_type=None, 
-        noise_model_path=None
+        noise_model_path=None,
+        l_low=0.2,
     ):
         """
         Generate samples from the model and yield intermediate samples from
@@ -848,14 +1074,20 @@ class GaussianDiffusion:
                 else: return super().find_class(module, name)
         
         if noise_model_path is not None:
-            if noise_type=="loss_model":
+            if noise_type=="loss_model" or noise_type=="freq_nn" or noise_type=="loss_model_sig10":
                 with open(noise_model_path, 'rb') as handle:
                     params_dict =  CPU_Unpickler(handle).load()
                     # params_dict = pickle.load(handle)
                     print("noise_model_path: ", noise_model_path)
                     noise_models = params_dict["nets"] 
-                    # train_dataset = params_dict["train_dataset"]  
-            elif noise_type=="freq_gaussian":
+            elif noise_type=="loss_model_double":
+                with open(noise_model_path, 'rb') as handle:
+                    params_dict =  CPU_Unpickler(handle).load()
+                    print("noise_model_path: ", noise_model_path)
+                    noise_models_low = params_dict["nets_low"] 
+                    noise_models_high = params_dict["nets_high"] 
+                    noise_models = (noise_models_low,noise_models_high)
+            elif noise_type in ["freq_gaussian","freq_gaussian_complex","freq_gaussian_nolog"]:
                 with open(noise_model_path, 'rb') as handle:
                     params_dict = pickle.load(handle)
                     noise_models = params_dict["models"] 
@@ -863,10 +1095,15 @@ class GaussianDiffusion:
         loss_array=[]
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
-            if noise_models is not None:
+            if noise_models is not None and noise_type!="loss_model_double":
                 noise_model = noise_models[i]
-                if noise_type=="loss_model":
+                if noise_type=="loss_model" or noise_type=="loss_model_sig10":
                     noise_model = noise_model.to(device)
+            else:
+                noise_models_low,noise_models_high = noise_models
+                noise_model_low = noise_models_low[i].to(device)
+                noise_model_high = noise_models_high[i].to(device)
+                noise_model = (noise_model_low,noise_model_high)
             
             if sample_method in rg_exps:
                 img.requires_grad_(True)
@@ -893,7 +1130,8 @@ class GaussianDiffusion:
                     s_schedule=s_schedule,
                     noise_type=noise_type, 
                     noise_model=noise_model,
-                    diffusion_idx=i 
+                    diffusion_idx=i,
+                    l_low=l_low 
                 )
             loss_array.append(str(out["loss"]))
             

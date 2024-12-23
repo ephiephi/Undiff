@@ -62,8 +62,7 @@ class UnconditionalTask(AbstractTask):
             pred_sample = pred_sample/pred_sample.max()
         name = f"Sample_{idx}.wav"
         torchaudio.save(
-            os.path.join(self.generated_path, name), pred_sample.view(1, -1), sr
-        )
+            os.path.join(self.generated_path, name), pred_sample.view(1, -1), sr, encoding="PCM_F")
         if y_noisy:
             name = os.path.basename(y_noisy)
         import pickle
@@ -71,8 +70,7 @@ class UnconditionalTask(AbstractTask):
             pickle.dump(pred_sample, handle, protocol=pickle.HIGHEST_PROTOCOL)
         if outpath:
             torchaudio.save(
-            os.path.join(outpath, name), pred_sample.view(1, -1), sr
-        )
+            os.path.join(outpath, name), pred_sample.view(1, -1), sr, encoding="PCM_F")
             
 
     def inference(
@@ -204,14 +202,12 @@ class BaseInverseTask(UnconditionalTask):
             pred_sample = pred_sample/pred_sample.max()
         name = f"Sample_{idx}.wav"
         torchaudio.save(
-            os.path.join(self.generated_path, name), pred_sample.view(1, -1), sr
-        )
+            os.path.join(self.generated_path, name), pred_sample.view(1, -1), sr,encoding="PCM_F")
+
         torchaudio.save(
-            os.path.join(self.degraded_path, name), degraded_sample.view(1, -1), sr
-        )
+            os.path.join(self.degraded_path, name), degraded_sample.view(1, -1), sr,encoding="PCM_F")
         torchaudio.save(
-            os.path.join(self.original_path, name), original_sample.view(1, -1), sr
-        )
+            os.path.join(self.original_path, name), original_sample.view(1, -1), sr,encoding="PCM_F")
 
     @abstractmethod
     def degradation(self, x: torch.Tensor) -> torch.Tensor:
@@ -314,14 +310,12 @@ class VocodingTask(BaseInverseTask):
     ):
         name = f"Sample_{idx}.wav"
         torchaudio.save(
-            os.path.join(self.generated_path, name), pred_sample.view(1, -1), sr
-        )
+            os.path.join(self.generated_path, name), pred_sample.view(1, -1), sr,encoding="PCM_F")
         torch.save(
             degraded_sample, os.path.join(self.degraded_path, name)
         )  # save mel spec tensor
         torchaudio.save(
-            os.path.join(self.original_path, name), original_sample.view(1, -1), sr
-        )
+            os.path.join(self.original_path, name), original_sample.view(1, -1), sr,encoding="PCM_F")
 
 
 class SourceSeparationTask(BaseInverseTask):
@@ -372,8 +366,7 @@ class SourceSeparationTask(BaseInverseTask):
         # redefine name for degraded
         name = f"Sample_{idx}.wav"
         torchaudio.save(
-            os.path.join(self.degraded_path, name), degraded_sample.view(1, -1), sr
-        )
+            os.path.join(self.degraded_path, name), degraded_sample.view(1, -1), sr,encoding="PCM_F")
 
     def degradation(self, x: torch.Tensor) -> torch.Tensor:
         return x[:, :, : x.size(-1) // 2] + x[:, :, x.size(-1) // 2 :]
