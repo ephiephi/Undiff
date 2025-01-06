@@ -17,7 +17,7 @@ def run_storm(exp_root,storm_root):
 
     dirs = glob(exp_root+"/*")
     for d in dirs:
-        if os.path.basename(d) in ["storm","analysis","cleans","noises","5f_snrs.pickle"]:
+        if os.path.basename(d) in ["storm","analysis","cleans","noises","5f_snrs.pickle","noises","noisy_wav","clean_wav"]:
             continue
         if Path(d).name == "scaling_snrs.pickle" or Path(d).name == "_scaling_snrs.pickle" or Path(d).name == "5f_snrs.pickle":
             continue
@@ -54,6 +54,6 @@ def run_storm(exp_root,storm_root):
 
 
 if __name__ == "__main__":
-    exp_root = "/data/ephraim/datasets/known_noise/undiff_exps/exp_m_long_ar"
-    storm_root = "/data/ephraim/datasets/known_noise/undiff_exps/exp_m_long_ar/storm/"
+    exp_root = "/data/ephraim/datasets/known_noise/undiff_exps/exp_m_long_ar_short"
+    storm_root = "/data/ephraim/datasets/known_noise/undiff_exps/exp_m_long_ar_short/storm/"
     run_storm(exp_root,storm_root)

@@ -1,0 +1,10 @@
+# searching for s, many files:
+s_array: [0.09]
+exp_root: "/data/ephraim/datasets/known_noise/undiff_exps/exp_n_0_onetrain/"
+network: "NetworkNoise4"
+epochs: 3500
+dataset_size: 1*1
+n_samples: 1
+batch_size: 1
+snr_array: []
+

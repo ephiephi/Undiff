@@ -36,13 +36,23 @@ def main_measure(exp_dir,enhanced_dirname="enhanced_60"):#
 def calc_measures(exp_dir,enhanced_dir,clean_dir,noisy_dir,snr_dirs):
     print(f"running dnsmos on:----- {enhanced_dir}")
     succeeded = 1
+    succeeded_noisy=1
     try:
         mos_args = argparse.Namespace(
                 testset_dir=enhanced_dir, personalized_MOS=False, csv_path=None)
         dns_df_all = dnsmos_local.main(mos_args)
     except:
         succeeded = 0
-        print(f"failed in {enhanced_dir}")
+        print(f"dnsmos_local failed in {enhanced_dir}")
+        
+    try:
+        mos_args = argparse.Namespace(
+            testset_dir=str(noisy_dir), personalized_MOS=False, csv_path=None
+        )
+        dns_df_noisy = dnsmos_local.main(mos_args)
+    except:
+        succeeded_noisy = 0
+        print(f"dnsmos_local failed in {noisy_dir}")
 
     if succeeded >0:
         data=[]
@@ -68,46 +78,44 @@ def calc_measures(exp_dir,enhanced_dir,clean_dir,noisy_dir,snr_dirs):
                     # Print metrics
                     # print(metrics)
                     data.append(metrics)
-            if len(data) >0:
-                df = pd.DataFrame.from_records(data,index=range(len(data))) 
+        if len(data) >0:
+            df = pd.DataFrame.from_records(data,index=range(len(data))) 
             df = df.merge(dns_df_all, on="filename")
+    
+    if succeeded_noisy > 0:
+        data_noisy = []
+        noisy_wavs_ = glob(str(noisy_dir)+"/*.wav")
+        for i,cur_noisy_path in tqdm(enumerate(noisy_wavs_)):
+            noisy_wav, en_sr = torchaudio.load(cur_noisy_path)
+            name = Path(cur_noisy_path).name
+            clean_path = Path(clean_dir)/name
+            speech_wav, _sr = torchaudio.load(clean_path)
             
-            data_noisy = []
-            noisy_wavs_ = glob(str(noisy_dir)+"/*.wav")
-            for i,cur_noisy_path in tqdm(enumerate(noisy_wavs_)):
-                noisy_wav, en_sr = torchaudio.load(cur_noisy_path)
-                name = Path(cur_noisy_path).name
-                clean_path = Path(clean_dir)/name
-                speech_wav, _sr = torchaudio.load(clean_path)
-                
-                # Compute metrics
-                metrics = get_metrics(clean=speech_wav[0].numpy(), mix=noisy_wav[0].numpy(),estimate=noisy_wav[0].numpy(), sample_rate=en_sr)
-                metrics["name"] = "noisy"
-                metrics["filename"] = (cur_noisy_path)
-                metrics["snr"] = cur_noisy_path.split("_snr")[1].split("_")[0]
-                if "noise" in Path(cur_noisy_path).name:
-                    metrics["noise_type"] = str(Path(cur_noisy_path).name).split("noise")[1].split("_")[0]
-                # Print metrics
-                # print(metrics)
-                data_noisy.append(metrics)
-                #[sgmse2 ,sgmse1,storm1,storm2,ours ]
-            if len(data_noisy) >0:
-                df_noisy = pd.DataFrame.from_records(data_noisy,index=range(len(data_noisy))) 
-                
-            mos_args = argparse.Namespace(
-                testset_dir=str(noisy_dir), personalized_MOS=False, csv_path=None
-            )
-            dns_df_noisy = dnsmos_local.main(mos_args)
+            # Compute metrics
+            metrics = get_metrics(clean=speech_wav[0].numpy(), mix=noisy_wav[0].numpy(),estimate=noisy_wav[0].numpy(), sample_rate=en_sr)
+            metrics["name"] = "noisy"
+            metrics["filename"] = (cur_noisy_path)
+            metrics["snr"] = cur_noisy_path.split("_snr")[1].split("_")[0]
+            if "noise" in Path(cur_noisy_path).name:
+                metrics["noise_type"] = str(Path(cur_noisy_path).name).split("noise")[1].split("_")[0]
+            # Print metrics
+            # print(metrics)
+            data_noisy.append(metrics)
+            #[sgmse2 ,sgmse1,storm1,storm2,ours ]
+        if len(data_noisy) >0:
+            df_noisy = pd.DataFrame.from_records(data_noisy,index=range(len(data_noisy))) 
+            
+            
             df_noisy = df_noisy.merge(dns_df_noisy, on="filename")
             
             df = pd.concat([df,df_noisy])
-            return df
+    return df
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="measure guided")
     parser.add_argument(
         "-exp_dir",
-        default="/data/ephraim/datasets/known_noise/undiff/exp_ar_i_095/c/",
+        default="/data/ephraim/datasets/known_noise/undiff_exps/exp_n_real/0/",
     )
     parser.add_argument(
         "-enhanced_dirname",

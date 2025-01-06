@@ -1007,8 +1007,9 @@ class GaussianDiffusion:
         
         print("calculating y noisy")
         if y_noisy is not None:
-            cur_noise_var = float(y_noisy.split("var")[1].split(".wav")[0])
-            print("cur_noise_var: ", cur_noise_var)
+            #for analitycal calculation
+            # cur_noise_var = float(y_noisy.split("var")[1].split(".wav")[0])
+            # print("cur_noise_var: ", cur_noise_var)
             print("shape: ", shape)
             
             y_noisy_, sr = torchaudio.load(y_noisy)

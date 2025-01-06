@@ -106,6 +106,131 @@ class NetworkNoise2(nn.Module):
         return -model_likelihood   
 
 
+class NetworkNoise3(nn.Module):
+    def __init__(self, kernel_size=9):
+        super().__init__()
+        self.kernel_size=kernel_size
+        self.conv1 = CausalConv1dClassS(1, 2, kernel_size=kernel_size, dilation=1)
+        self.tanh1 = nn.Tanh()
+        self.conv2 = CausalConv1dClassS(2, 2, kernel_size=kernel_size, dilation=2)
+        self.tanh2 = nn.Tanh()
+        self.conv3 = CausalConv1dClassS(2, 2, kernel_size=kernel_size, dilation=4)
+        self.tanh3 = nn.Tanh()
+        self.conv4 = CausalConv1dClassS(2, 2, kernel_size=kernel_size, dilation=8)
+        # self.b = nn.Parameter(torch.tensor(0.5))  # Initial value of 'b'
+
+
+    def forward(self, x, cur_gt):
+
+        x1 = self.conv1(x)
+        x = self.tanh1(x1)
+        x = self.conv2(x)
+        x = self.tanh2(x)
+        x = self.conv3(x)
+        x = self.tanh3(x)
+        x = self.conv4(x)
+        x = x+x1
+
+        means = x[:,0,:]
+        log_var = x[:,1,:]
+        stds = torch.exp(0.5 *log_var)
+        # stds = torch.ones_like(means)*self.b
+        return means, stds
+    
+    def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
+        wav_tensor = wav_tensor.squeeze(axis=1)[:,self.kernel_size+1:]
+        means_=expected_means.squeeze(axis=1)[:,self.kernel_size:-1]
+        stds_ = expected_stds.squeeze(axis=1)[:,self.kernel_size:-1]
+        # print(wav_tensor.shape)
+        # print(means_.shape)
+
+        exp_all = -(1/2)*((torch.square(wav_tensor-means_)/torch.square(stds_)))
+        param_all = 1/(np.sqrt(2*np.pi)*stds_)
+        model_likelihood1 = torch.sum(torch.log(param_all), axis=-1) 
+        model_likelihood2 = torch.sum(exp_all, axis=-1) 
+
+        if verbose:
+            print("model_likelihood1: ", model_likelihood1)
+            print("model_likelihood2: ", model_likelihood2)
+        likelihood = model_likelihood1 + model_likelihood2
+        return likelihood.mean()
+    
+    def casual_loss(self, expected_means, expected_stds, wav_tensor):
+        model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
+        return -model_likelihood   
+
+
+
+class NetworkNoise4(nn.Module):
+    def __init__(self, kernel_size=9):
+        super().__init__()
+        self.kernel_size=kernel_size
+        self.conv1 = CausalConv1dClassS(1, 2, kernel_size=kernel_size, dilation=1)
+        self.tanh1 = nn.Tanh()
+        self.conv2 = CausalConv1dClassS(2, 2, kernel_size=kernel_size, dilation=2)
+        self.tanh2 = nn.Tanh()
+        self.conv3 = CausalConv1dClassS(2, 2, kernel_size=kernel_size, dilation=4)
+        self.tanh3 = nn.Tanh()
+        self.conv4 = CausalConv1dClassS(2, 2, kernel_size=kernel_size, dilation=8)
+        self.tanh4 = nn.Tanh()
+        
+        self.conv5 = CausalConv1dClassS(2, 2, kernel_size=kernel_size, dilation=8)
+        self.tanh5 = nn.Tanh()
+        self.conv6 = CausalConv1dClassS(2, 2, kernel_size=kernel_size, dilation=4)
+        self.tanh6 = nn.Tanh()
+        self.conv7 = CausalConv1dClassS(2, 2, kernel_size=kernel_size, dilation=2)
+        self.tanh7 = nn.Tanh()
+        self.conv8 = CausalConv1dClassS(2, 2, kernel_size=kernel_size, dilation=1)
+        # self.b = nn.Parameter(torch.tensor(0.5))  # Initial value of 'b'
+
+
+    def forward(self, x, cur_gt):
+
+        x1 = self.conv1(x)
+        x = self.tanh1(x1)
+        x = self.conv2(x)
+        x = self.tanh2(x)
+        x = self.conv3(x)
+        x = self.tanh3(x)
+        x2 = self.conv4(x)
+        x = x2+x1
+        x = self.tanh4(x)
+        x = self.conv5(x)
+        x = self.tanh5(x)
+        x = self.conv6(x)
+        x = self.tanh6(x)
+        x = self.conv7(x)
+        x = self.tanh7(x)
+        x = self.conv8(x)
+        x = x1+x2+x
+
+        means = x[:,0,:]
+        log_var = x[:,1,:]
+        stds = torch.exp(0.5 *log_var)
+        # stds = torch.ones_like(means)*self.b
+        return means, stds
+    
+    def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
+        wav_tensor = wav_tensor.squeeze(axis=1)[:,self.kernel_size+1:]
+        means_=expected_means.squeeze(axis=1)[:,self.kernel_size:-1]
+        stds_ = expected_stds.squeeze(axis=1)[:,self.kernel_size:-1]
+        # print(wav_tensor.shape)
+        # print(means_.shape)
+
+        exp_all = -(1/2)*((torch.square(wav_tensor-means_)/torch.square(stds_)))
+        param_all = 1/(np.sqrt(2*np.pi)*stds_)
+        model_likelihood1 = torch.sum(torch.log(param_all), axis=-1) 
+        model_likelihood2 = torch.sum(exp_all, axis=-1) 
+
+        if verbose:
+            print("model_likelihood1: ", model_likelihood1)
+            print("model_likelihood2: ", model_likelihood2)
+        likelihood = model_likelihood1 + model_likelihood2
+        return likelihood.mean()
+    
+    def casual_loss(self, expected_means, expected_stds, wav_tensor):
+        model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
+        return -model_likelihood  
 
 # class CausalConv2d(nn.Conv2d):
 #     def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=None, dilation=1, groups=1, bias=True):

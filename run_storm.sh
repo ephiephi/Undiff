@@ -51,24 +51,24 @@ python /data/ephraim/repos/storm/enhancement.py \
   --test_dir "$TEST_DIR" \
   --enhanced_dir "$ENHANCED_DIR_SGMSE_WSJ0" \
   --ckpt "$CKPT_PATH_1" \
-  --mode "score-only"
+  --mode "score-only" --N 200
 
 python /data/ephraim/repos/storm/enhancement.py \
   --test_dir "$TEST_DIR" \
   --enhanced_dir "$ENHANCED_DIR_STORM_VBD" \
   --ckpt "$CKPT_PATH_2" \
-  --mode "storm"
+  --mode "storm" --N 200
 
 python /data/ephraim/repos/storm/enhancement.py \
   --test_dir "$TEST_DIR" \
   --enhanced_dir "$ENHANCED_DIR_SGMSE_TIMIT" \
   --ckpt "$CKPT_PATH_3" \
-  --mode "score-only"
+  --mode "score-only" --N 200
 
 python /data/ephraim/repos/storm/enhancement.py \
   --test_dir "$TEST_DIR" \
   --enhanced_dir "$ENHANCED_DIR_STORM_TIMIT" \
   --ckpt "$CKPT_PATH_4" \
-  --mode "storm"
+  --mode "storm" --N 200
 
 

@@ -49,7 +49,16 @@ def measure_storm(storm_root="/data/ephraim/datasets/known_noise/sgmse/exp_l"):
                 noisy_path =  Path(noisy_dir)/name
                 noisy_wav, _sr = torchaudio.load(noisy_path)
                 # Compute metrics
-                metrics = get_metrics(clean=speech_wav[0].numpy(), mix=noisy_wav[0].numpy(),estimate=enhance[0].numpy(), sample_rate=en_sr)
+                try:
+                    metrics = get_metrics(clean=speech_wav[0].numpy(), mix=noisy_wav[0].numpy(),estimate=enhance[0].numpy(), sample_rate=en_sr)
+                except:
+                    print("can't compute metrics for ", ours)
+                    print("maybe not enough speech after VAD")
+                    bad_files = os.path.join(storm_root, "bad_files.txt")
+                    with open(bad_files, "a") as f:
+                        f.write(ours)
+                        f.write("\n")
+                    continue
                 metrics["name"] = Path(ours).name[2:]
                 metrics["filename"] = (ours)
                 metrics["dir"] = str(Path(ours).name).split("_")[0]
@@ -68,3 +77,9 @@ def measure_storm(storm_root="/data/ephraim/datasets/known_noise/sgmse/exp_l"):
             with open(stats_path, "wb") as f:
                 pickle.dump(df, f, protocol=pickle.HIGHEST_PROTOCOL)
             print("stats_path: ", stats_path)
+
+
+if __name__ == "__main__":
+    exp_root = "/data/ephraim/datasets/known_noise/undiff_exps/exp_n_real/"
+    storm_root = "/data/ephraim/datasets/known_noise/undiff_exps/exp_n_real/storm/"
+    measure_storm(storm_root)
