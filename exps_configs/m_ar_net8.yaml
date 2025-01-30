@@ -1,0 +1,12 @@
+# searching for s, many files:
+s_array: [0.05,0.07,0.09,0.1,0.11,0.15,0.2,0.23,0.25,0.28,0.3,0.33,0.35,0.4,]
+exp_root: "/data/ephraim/datasets/known_noise/undiff_exps/exp_m_net8/"
+network: "NetworkNoise8"
+epochs: 30
+min_epochs: 5
+slope_epochs: 2
+dataset_size: 128*8
+n_samples: 320000
+batch_size: 16
+snr_array: ["5"]
+noise_type: complicated_ar

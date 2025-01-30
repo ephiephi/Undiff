@@ -80,6 +80,6 @@ def measure_storm(storm_root="/data/ephraim/datasets/known_noise/sgmse/exp_l"):
 
 
 if __name__ == "__main__":
-    exp_root = "/data/ephraim/datasets/known_noise/undiff_exps/exp_n_real/"
-    storm_root = "/data/ephraim/datasets/known_noise/undiff_exps/exp_n_real/storm/"
+    exp_root = "/data/ephraim/datasets/known_noise/undiff_exps/exp_n_chosen5/"
+    storm_root = "/data/ephraim/datasets/known_noise/undiff_exps/exp_n_chosen5/storm"
     measure_storm(storm_root)

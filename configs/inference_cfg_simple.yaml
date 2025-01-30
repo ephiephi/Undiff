@@ -1,0 +1,25 @@
+defaults:
+  - task: unconditional
+  - model: diffwave
+  - diffusion: gaussian_diffusion_cosine
+  - _self_
+
+output_dir: results/guided
+audio_dir: 1
+use_ema: false
+segment_size: null
+sampling_rate: 16000
+device: cuda
+guidance: true
+guid_s: 0.05
+cur_noise_var: null
+y_noisy: /data/ephraim/datasets/known_noise/undiff_exps/exp_n_find_scheduler_type/30X1/noisy_wav/noise30_book_07848_chp_0026_reader_03390_62_LoiPr_bDqow_snr5_fileid_30.wav
+outpath: /data/ephraim/datasets/known_noise/undiff_exps/exp_n_find_scheduler_type/30X1/enhanced_60/snr5/s0.05
+clean_wav: null
+s_schedule: 60
+noise_type: loss_model
+noise_model_path: /data/ephraim/datasets/known_noise/undiff_exps/exp_n_find_scheduler_type/30X1/0_snr5_30_models.pickle
+l_low: 0.2
+network: null #"NetworkNoise8"
+
+#diffusion=gaussian_diffusion

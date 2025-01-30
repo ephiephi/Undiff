@@ -70,9 +70,9 @@ def get_stats_df(df, alg_name, dir_=None, noise_type=None, snr_=None):
 
 def create_mine_df(exp_root,df_noisy,mine,noises,cols,names,snrs):
     for d in names: 
-        if get_df(exp_root, d) is None:
-            continue
         dfme = get_df(exp_root,d)
+        if dfme is None:
+            continue
         dfme = dfme.assign(dir=d)
         cur_df_noisy = dfme[dfme["name"]=="noisy"].reset_index(drop=True)
         cur_df_noisy.loc[0,"dir"] = d
@@ -220,7 +220,7 @@ def analyze_exp(exp_root,noises_names,snrs,names):
         snr = df["snr"][i]
         noisetype = df["noise_type"][i]
         dir_ = df["dir"][i]
-        s = float(df["name"][i].replace("s",""))
+        # s = float(df["name"][i].replace("s",""))
         wavpath = df["filename"][i]
         noisy_path = Path(exp_root) / dir_ / "noisy_wav" / Path(wavpath).name
 

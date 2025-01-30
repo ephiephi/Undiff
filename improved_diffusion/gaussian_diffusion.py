@@ -632,6 +632,7 @@ class GaussianDiffusion:
             c3 = _extract_into_tensor(self.sqrt_recip_alphas_cumprod, t, x.shape)
             # c4 = (1 - Alpha_bar[t]) / Alpha_bar[t]
             c4 = torch.div(1- alpha_bar_t, alpha_bar_t)
+            g_t = torch.sqrt(c4)
             # print("c3: ", c3)
             # print("c4: ", c4)
             # print("x: ", x)
@@ -681,15 +682,18 @@ class GaussianDiffusion:
 
             
             if noise_type == "loss_model":
-                print("--------loss_model----------")
+                # print("--------loss_model----------")
                 with torch.enable_grad():
                     x_t = cur_mean[:].detach()#.requires_grad_(True)
                     noise_model = noise_model.to("cuda")
                     n_t = y_noisy - c3 * x_t
                     n_t = n_t.requires_grad_(True)
-                    mu, sig = noise_model(n_t,"none" )
+                    # mu, sig = noise_model(n_t,"none" )
+                    mu, sig = noise_model(n_t,g_t)
                     
-                    loss = noise_model.calc_model_likelihood(mu, sig, n_t).to("cuda")#.requires_grad_(True)
+                    # mu, sig = noise_model(n_t)
+                    # loss = noise_model.gaussian_nll_loss(mu, sig, n_t).to("cuda")
+                    loss = noise_model.calc_model_likelihood(mu, sig, n_t).to("cuda")
                     # loss = loss*len()
                     grad_log_p = -c3 * torch.autograd.grad(loss, n_t)[0]
             elif noise_type == "loss_model_sig10":
@@ -866,21 +870,22 @@ class GaussianDiffusion:
             # if not os.path.exists(root2):
             #     os.mkdir(root2)
             # xtpath = base_root + "b/{}/x_t/{}.wav".format(guid_s,diffusion_idx)
-            print("cur_mean.max(): ", cur_mean.max())
-            
-            # if cur_mean.max() > 1:
-            #     cur_mean_normed = cur_mean/cur_mean.max()
-            # else:
-            #     cur_mean_normed = cur_mean
-            # torchaudio.save(xtpath, cur_mean_normed.to("cpu").view(1,-1), 16000)
+            if True: #torch.isnan( cur_mean.max()):
+                print("cur_mean.max(): ", cur_mean.max())
+                
+                # if cur_mean.max() > 1:
+                #     cur_mean_normed = cur_mean/cur_mean.max()
+                # else:
+                #     cur_mean_normed = cur_mean
+                # torchaudio.save(xtpath, cur_mean_normed.to("cpu").view(1,-1), 16000)
 
-            # loss_path = base_root+f"b/{guid_s}/losses.txt"
-            
-            print("loss: ", loss)
-            # print("grad_log_p: ", grad_log_p)
-            # print("c3: ", c3)
-            # print("cur_s: ", cur_s)
-            print("cur_mean: ", cur_mean) #/print("guid_s: ", guid_s)
+                # loss_path = base_root+f"b/{guid_s}/losses.txt"
+                
+                print("loss: ", loss)
+                # print("grad_log_p: ", grad_log_p)
+                # print("c3: ", c3)
+                # print("cur_s: ", cur_s)
+                print("cur_mean: ", cur_mean) #/print("gu`id_s: ", guid_s)
         sample = cur_mean + nonzero_mask * sigma_t * noise
         return {"sample": sample, "pred_xstart": out["pred_xstart"],"loss": loss}#,"loss": loss
 
@@ -911,6 +916,7 @@ class GaussianDiffusion:
         noise_type=None, 
         noise_model_path=None,
         l_low=0.2,
+        network=None,
     ):
         """
         Generate samples from the model.
@@ -961,6 +967,7 @@ class GaussianDiffusion:
             noise_type=noise_type, 
             noise_model_path=noise_model_path,
             l_low=l_low,
+            network=network,
         ):
             final = sample
 
@@ -993,6 +1000,7 @@ class GaussianDiffusion:
         noise_type=None, 
         noise_model_path=None,
         l_low=0.2,
+        network=None,
     ):
         """
         Generate samples from the model and yield intermediate samples from
@@ -1074,7 +1082,7 @@ class GaussianDiffusion:
                     return lambda b: torch.load(io.BytesIO(b), map_location='cuda:0')
                 else: return super().find_class(module, name)
         
-        if noise_model_path is not None:
+        if noise_model_path is not None and network is None:
             if noise_type=="loss_model" or noise_type=="freq_nn" or noise_type=="loss_model_sig10":
                 with open(noise_model_path, 'rb') as handle:
                     params_dict =  CPU_Unpickler(handle).load()
@@ -1092,11 +1100,45 @@ class GaussianDiffusion:
                 with open(noise_model_path, 'rb') as handle:
                     params_dict = pickle.load(handle)
                     noise_models = params_dict["models"] 
+        elif network is not None:
+            from create_exp_m import NetworkNoise8,NetworkNoise7, NetworkNoise6,NetworkNoise5,NetworkNoise4, NetworkNoise3, WaveNetCausalModel
+            from train_on_all_noises import WaveNet
+            # from train_on_all_noises_8_gt import NetworkNoise8
+            if network == "NetworkNoise8":
+                noise_model = NetworkNoise8()
+            if network == "NetworkNoise7":
+                noise_model = NetworkNoise7()
+            if network == "NetworkNoise6":
+                noise_model = NetworkNoise6()
+            if network == "NetworkNoise5":
+                noise_model = NetworkNoise5()
+            if network == "NetworkNoise4":
+                noise_model = NetworkNoise4()
+            if network == "NetworkNoise3":
+                noise_model = NetworkNoise3()
+            if network == "WaveNetCausalModel":
+                noise_model = WaveNetCausalModel()
+            if network == "WaveNet":
+                noise_model = WaveNet(
+                in_channels=1,
+                out_channels=2,
+                residual_channels=32,
+                skip_channels=64,
+                kernel_size=3,
+                dilation_depth=8,
+                num_stacks=3
+            )
+            noise_model.load_state_dict(torch.load(noise_model_path, map_location=torch.device(device)))
+            noise_model.eval()
+            noise_model.to(device)
+            
         
         loss_array=[]
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
-            if noise_models is not None and noise_type!="loss_model_double":
+            if network is not None:
+                noise_model = noise_model
+            elif noise_models is not None and noise_type!="loss_model_double":
                 noise_model = noise_models[i]
                 if noise_type=="loss_model" or noise_type=="loss_model_sig10":
                     noise_model = noise_model.to(device)

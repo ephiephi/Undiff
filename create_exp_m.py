@@ -354,6 +354,9 @@ class NetworkNoise3(nn.Module):
         return -model_likelihood   
     
 
+
+
+
 class NetworkNoise4(nn.Module):
     def __init__(self, kernel_size=9):
         super().__init__()
@@ -428,6 +431,295 @@ class NetworkNoise4(nn.Module):
 
 
 
+class NetworkNoise5(nn.Module):
+    def __init__(self, kernel_size=9, num_channels=8, dilation_pattern=None):
+        super().__init__()
+        self.kernel_size=kernel_size
+        self.num_channels = num_channels
+        if dilation_pattern is None:
+            dilation_pattern = [1, 2, 2,2, 4, 8, 16]
+        self.blocks = nn.ModuleList()
+        in_channels = 1  # Input channels (single waveform channel)
+        for dilation in dilation_pattern:
+            block = nn.Sequential(
+                CausalConv1dClassS(in_channels, num_channels, kernel_size=kernel_size, dilation=dilation),
+                nn.BatchNorm1d([num_channels]),
+                nn.Tanh()
+            )
+            self.blocks.append(block)
+            in_channels = num_channels
+        # out_channels = 2
+        # last_block = nn.Sequential(
+        #         CausalConv1dClassS(in_channels, out_channels, kernel_size=kernel_size, dilation=dilation),
+        #         nn.LayerNorm([num_channels]),
+        #         nn.Tanh()
+        #     )
+        # self.blocks.append(last_block)
+        self.conv_mean = nn.Conv1d(num_channels, 1, kernel_size=1)
+        self.conv_log_var = nn.Conv1d(num_channels, 1, kernel_size=1)
+        
+
+
+    def forward(self, x, cur_gt):
+        residuals = x
+        skip_connections = 0
+        
+        for block in self.blocks:
+            out = block(residuals)
+            skip_connections = skip_connections + out
+            residuals = out
+
+
+        means = self.conv_mean(skip_connections).squeeze(1)
+        log_var = self.conv_log_var(skip_connections).squeeze(1)
+        stds = torch.exp(0.5 *log_var)
+        # stds = torch.ones_like(means)*self.b
+        return means, stds
+    
+    def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
+        wav_tensor = wav_tensor.squeeze(axis=1)[:,self.kernel_size+1:]
+        means_=expected_means.squeeze(axis=1)[:,self.kernel_size:-1]
+        stds_ = expected_stds.squeeze(axis=1)[:,self.kernel_size:-1]
+        # print(wav_tensor.shape)
+        # print(means_.shape)
+
+        exp_all = -(1/2)*((torch.square(wav_tensor-means_)/torch.square(stds_)))
+        param_all = 1/(np.sqrt(2*np.pi)*stds_)
+        model_likelihood1 = torch.sum(torch.log(param_all), axis=-1) 
+        model_likelihood2 = torch.sum(exp_all, axis=-1) 
+
+        if verbose:
+            print("model_likelihood1: ", model_likelihood1)
+            print("model_likelihood2: ", model_likelihood2)
+        likelihood = model_likelihood1 + model_likelihood2
+        return likelihood.mean()
+    
+    def casual_loss(self, expected_means, expected_stds, wav_tensor):
+        model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
+        return -model_likelihood   
+
+
+
+
+class NetworkNoise6(nn.Module):
+    def __init__(self, kernel_size=9, num_channels=8, dilation_pattern=None):
+        super().__init__()
+        self.kernel_size=kernel_size
+        self.num_channels = num_channels
+        if dilation_pattern is None:
+            dilation_pattern = [1, 2, 4,8, 1, 2, 4, 8]
+        self.blocks = nn.ModuleList()
+        in_channels = 1  # Input channels (single waveform channel)
+        for dilation in dilation_pattern:
+            block = nn.Sequential(
+                CausalConv1dClassS(in_channels, num_channels, kernel_size=kernel_size, dilation=dilation),
+                # nn.BatchNorm1d([num_channels]),
+                nn.Tanh()
+            )
+            self.blocks.append(block)
+            in_channels = num_channels
+        # out_channels = 2
+        # last_block = nn.Sequential(
+        #         CausalConv1dClassS(in_channels, out_channels, kernel_size=kernel_size, dilation=dilation),
+        #         nn.LayerNorm([num_channels]),
+        #         nn.Tanh()
+        #     )
+        # self.blocks.append(last_block)
+        self.conv_mean = nn.Conv1d(num_channels, 1, kernel_size=1)
+        self.conv_log_var = nn.Conv1d(num_channels, 1, kernel_size=1)
+        
+
+
+    def forward(self, x, cur_gt):
+        residuals = x
+        skip_connections = 0
+        
+        for block in self.blocks:
+            out = block(residuals)
+            skip_connections = skip_connections + out
+            residuals = out
+
+
+        means = self.conv_mean(skip_connections).squeeze(1)
+        log_var = self.conv_log_var(skip_connections).squeeze(1)
+        stds = torch.exp(0.5 *log_var)
+        # stds = torch.ones_like(means)*self.b
+        return means, stds
+    
+    def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
+        wav_tensor = wav_tensor.squeeze(axis=1)[:,self.kernel_size+1:]
+        means_=expected_means.squeeze(axis=1)[:,self.kernel_size:-1]
+        stds_ = expected_stds.squeeze(axis=1)[:,self.kernel_size:-1]
+        # print(wav_tensor.shape)
+        # print(means_.shape)
+
+        exp_all = -(1/2)*((torch.square(wav_tensor-means_)/torch.square(stds_)))
+        param_all = 1/(np.sqrt(2*np.pi)*stds_)
+        model_likelihood1 = torch.sum(torch.log(param_all), axis=-1) 
+        model_likelihood2 = torch.sum(exp_all, axis=-1) 
+
+        if verbose:
+            print("model_likelihood1: ", model_likelihood1)
+            print("model_likelihood2: ", model_likelihood2)
+        likelihood = model_likelihood1 + model_likelihood2
+        return likelihood.mean()
+    
+    def casual_loss(self, expected_means, expected_stds, wav_tensor):
+        model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
+        return -model_likelihood   
+
+
+
+class NetworkNoise7(nn.Module):
+    def __init__(self, kernel_size=9, num_channels=32, dilation_pattern=None):
+        super().__init__()
+        self.kernel_size=kernel_size
+        self.num_channels = num_channels
+        if dilation_pattern is None:
+            dilation_pattern = [1, 1, 2,2, 1, 2, 2, 1,1, 2, 2, 1,4]
+        self.blocks = nn.ModuleList()
+        in_channels = 1  # Input channels (single waveform channel)
+        for dilation in dilation_pattern:
+            block = nn.Sequential(
+                CausalConv1dClassS(in_channels, num_channels, kernel_size=kernel_size, dilation=dilation),
+                # nn.BatchNorm1d([num_channels]),
+                nn.Tanh()
+            )
+            self.blocks.append(block)
+            in_channels = num_channels
+
+        self.conv_mean = nn.Conv1d(num_channels, 1, kernel_size=1)
+        self.conv_log_var = nn.Conv1d(num_channels, 1, kernel_size=1)
+        
+
+
+    def forward(self, x, cur_gt):
+        residuals = x
+        skip_connections = 0
+        
+        for block in self.blocks:
+            out = block(residuals)
+            skip_connections = skip_connections + out
+            residuals = out
+
+
+        means = self.conv_mean(skip_connections).squeeze(1)
+        log_var = self.conv_log_var(skip_connections).squeeze(1)
+        stds = torch.exp(0.5 *log_var)
+        # stds = torch.ones_like(means)*self.b
+        return means, stds
+    
+    def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
+        wav_tensor = wav_tensor.squeeze(axis=1)[:,self.kernel_size+1:]
+        means_=expected_means.squeeze(axis=1)[:,self.kernel_size:-1]
+        stds_ = expected_stds.squeeze(axis=1)[:,self.kernel_size:-1]
+        # print(wav_tensor.shape)
+        # print(means_.shape)
+
+        exp_all = -(1/2)*((torch.square(wav_tensor-means_)/torch.square(stds_)))
+        param_all = 1/(np.sqrt(2*np.pi)*stds_)
+        model_likelihood1 = torch.sum(torch.log(param_all), axis=-1) 
+        model_likelihood2 = torch.sum(exp_all, axis=-1) 
+
+        if verbose:
+            print("model_likelihood1: ", model_likelihood1)
+            print("model_likelihood2: ", model_likelihood2)
+        likelihood = model_likelihood1 + model_likelihood2
+        return likelihood.mean()
+    
+    def casual_loss(self, expected_means, expected_stds, wav_tensor):
+        model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
+        return -model_likelihood   
+
+
+
+
+import torch
+import torch.nn as nn
+
+class NetworkNoise8(nn.Module):
+    def __init__(self, kernel_size=9, initial_channels=16, dilation_patterns=None):
+        super().__init__()
+        self.kernel_size = kernel_size
+        
+        # Default dilation patterns for each stage
+        if dilation_patterns is None:
+            dilation_patterns = [
+                [1, 1, 2, 2],   # Stage 1
+                [1, 2, 2, 1],   # Stage 2
+                [1, 4, 4, 1],   # Stage 3
+                [1, 8, 8, 1]    # Stage 4
+            ]
+        
+        self.stages = nn.ModuleList()
+        in_channels = 1  # Input channels (single waveform channel)
+        channels = initial_channels
+
+        # Create stages with progressively increasing channels
+        for stage_dilations in dilation_patterns:
+            stage_blocks = nn.ModuleList()
+            for dilation in stage_dilations:
+                block = nn.Sequential(
+                    CausalConv1dClassS(in_channels, channels, kernel_size=kernel_size, dilation=dilation),
+                    nn.Tanh()
+                )
+                stage_blocks.append(block)
+                in_channels = channels
+            self.stages.append(stage_blocks)
+            channels= channels*2  # Double the number of channels at the end of each stage
+
+        # Final output layers
+        self.conv_mean = nn.Conv1d(in_channels, 1, kernel_size=1)
+        self.conv_log_var = nn.Conv1d(in_channels, 1, kernel_size=1)
+
+    def forward(self, x, cur_gt):
+        device = x.device  # Ensure all layers are on the same device as the input
+        residuals = x
+        skip_connections = None
+
+        # Pass through each stage
+        for stage_blocks in self.stages:
+            for block in stage_blocks:
+                out = block(residuals.to(device))
+                if skip_connections is None:
+                    skip_connections = out
+                else:
+                    # Align skip connections before adding
+                    if skip_connections.size(1) != out.size(1):
+                        skip_proj = nn.Conv1d(skip_connections.size(1), out.size(1), kernel_size=1).to(device)
+                        skip_connections = skip_proj(skip_connections)
+                    skip_connections=skip_connections + out
+                residuals = out
+
+        means = self.conv_mean(skip_connections).squeeze(1).to(device)
+        log_var = self.conv_log_var(skip_connections).squeeze(1).to(device)
+        stds = torch.exp(0.5 * log_var)
+        return means, stds
+
+    def calc_model_likelihood(self, expected_means, expected_stds, wav_tensor, verbose=False):
+        wav_tensor = wav_tensor.squeeze(axis=1)[:, self.kernel_size + 1:]
+        means_ = expected_means.squeeze(axis=1)[:, self.kernel_size:-1]
+        stds_ = expected_stds.squeeze(axis=1)[:, self.kernel_size:-1]
+
+        exp_all = -(1 / 2) * ((torch.square(wav_tensor - means_) / torch.square(stds_)))
+        param_all = 1 / (np.sqrt(2 * np.pi) * stds_)
+        model_likelihood1 = torch.sum(torch.log(param_all), axis=-1)
+        model_likelihood2 = torch.sum(exp_all, axis=-1)
+
+        if verbose:
+            print("model_likelihood1: ", model_likelihood1)
+            print("model_likelihood2: ", model_likelihood2)
+
+        likelihood = model_likelihood1 + model_likelihood2
+        return likelihood.mean()
+
+    def casual_loss(self, expected_means, expected_stds, wav_tensor):
+        model_likelihood = self.calc_model_likelihood(expected_means, expected_stds, wav_tensor)
+        return -model_likelihood
+
+
+
+
 
 
 class GatedResidualBlock(nn.Module):
@@ -497,10 +789,10 @@ class WaveNetCausalModel(nn.Module):
     def __init__(
         self,
         kernel_size=9,
-        residual_channels=16,
-        skip_channels=16,
-        dilation_depth=4,
-        num_stacks=2
+        residual_channels=8,
+        skip_channels=4,
+        dilation_depth=8,
+        num_stacks=4
     ):
         """
         Args:
@@ -608,8 +900,11 @@ def plot_loss(loss_array,loss_test_array,j, netname,imgpath):
 
 
 import torch.multiprocessing as mp
+import copy
 
-def train_nets_process(network, train_full_tensors, test_full_tensors, device, idxes,trial, epochs=6000,batch_size=16,g_t=None,exp_root=None):
+def train_nets_process(network, train_full_tensors, test_full_tensors, device, idxes,trial, epochs=6000,batch_size=16,g_t=None,exp_root=None,min_epochs=400,slope_epochs=2,quarter_idx=None):
+    print("--------  device: ", device)
+    print("epochs,min_epochs,slope_epochs: ",epochs,min_epochs,slope_epochs)
     if network=="NetworkNoise2":
         nets = [NetworkNoise2() for i in range(len(idxes))]
     elif network=="NetworkNoise3":
@@ -618,9 +913,19 @@ def train_nets_process(network, train_full_tensors, test_full_tensors, device, i
         nets = [NetworkNoise4() for i in range(len(idxes))]
     elif network=="WaveNetCausalModel":
         nets = [WaveNetCausalModel() for i in range(len(idxes))]
+    elif network=="NetworkNoise5":
+        nets = [NetworkNoise5() for i in range(len(idxes))]
+    elif network=="NetworkNoise6":
+        nets = [NetworkNoise6() for i in range(len(idxes))]
+    elif network=="NetworkNoise7":
+        nets = [NetworkNoise7() for i in range(len(idxes))]
+    elif network=="NetworkNoise8":
+        nets = [NetworkNoise8() for i in range(len(idxes))]
     else:
         print("network unknown")
         raise Exception
+    nets_min = copy.deepcopy(nets)
+    mins=[1000000000 for i in range(len(idxes))]
     # elif trial==1:
     #     nets = [Network2() for i in range(len(idxes))]
     # elif trial==2:
@@ -629,19 +934,20 @@ def train_nets_process(network, train_full_tensors, test_full_tensors, device, i
     #     nets = [Network4() for i in range(len(idxes))]
     
     print("idxes[0]:",idxes[0])
-    if idxes[0] == 0:
-        quarter_idx=0
-    elif idxes[0] == 50:
-        quarter_idx=1
-    elif idxes[0] == 100:
-        quarter_idx=2
-    elif idxes[0] == 150:
-        quarter_idx=3
-    else:
-        print ("no identifiesd quarter")
-        raise Exception
+    print("quarter_idx:",quarter_idx)
+    # if idxes[0] == 0:
+    #     quarter_idx=0
+    # elif idxes[0] == 50:
+    #     quarter_idx=1
+    # elif idxes[0] == 100:
+    #     quarter_idx=2
+    # elif idxes[0] == 150:
+    #     quarter_idx=3
+    # else:
+    #     print ("no identifiesd quarter")
+    #     raise Exception
     
-    cur_epochs = epochs
+    # cur_epochs = epochs
     
 
     loss_array = {}
@@ -672,7 +978,9 @@ def train_nets_process(network, train_full_tensors, test_full_tensors, device, i
 
         optimizer = optim.Adam(model.parameters())
         
-        cur_epochs = epochs
+        
+        cur_epochs = int((epochs-min_epochs)*(1-i/200)**slope_epochs+min_epochs)
+        # print(f"cur_epochs_{i}: ", cur_epochs)
 
         for epoch in range(cur_epochs):
             running_loss = 0.0
@@ -698,15 +1006,19 @@ def train_nets_process(network, train_full_tensors, test_full_tensors, device, i
                     loss_test_array[i].append(float(loss_t))
                 else:
                     loss_test_array[i] = [float(loss_t)]
+                # print("loss_t,mins[net_counter]: ",loss_t,mins[net_counter])
+                if loss_t < mins[net_counter]:
+                    mins[net_counter] = loss_t
+                    nets_min[net_counter] = model
             
             if i in loss_array:
                 loss_array[i].append(float(loss))
             else:
                 loss_array[i] = [float(loss)]
         nets[net_counter].parameters = model.parameters
-        print(f"Model {i} Epoch {epoch+1}/{epochs}, Loss: {running_loss}")
+        print(f"Model {i} Epoch {epoch+1}/{cur_epochs}, Loss: {running_loss}")
         
-        if i in [0,20,50,100,150]:
+        if i in [0,20,50,100,150] or net_counter==0:
             if exp_root == None:
                 print("dont have path for graph")
             else:
@@ -716,19 +1028,58 @@ def train_nets_process(network, train_full_tensors, test_full_tensors, device, i
                 imgpath = father_path/ f"loss_net_{network}_i{i}.jpg"
                 print("plot_loss")
                 plot_loss(loss_array,loss_test_array,i, network,imgpath)
+    print("test_loss mins array: ", mins)
     
-    return nets, loss_array, loss_test_array, quarter_idx
+    return nets_min, loss_array, loss_test_array, quarter_idx
 
 
-def train_nets_parralel(network,train_dataset, test_dataset,trial=0, epochs=100,num_nets=200,batch_size=16,g_t=None,exp_root=None):
+
+
+def get_group_indices(numbers, num_groups=4):
+    """
+    Divides the given list of numbers into num_groups sequential groups
+    such that the sum of numbers in each group is as close as possible.
+    
+    Returns the indices for each group.
+    """
+    total_sum = sum(numbers)
+    target_sum = total_sum / num_groups
+    groups = []
+    current_group = []
+    current_sum = 0
+
+    for i, num in enumerate(numbers):
+        current_sum += num
+        current_group.append(i)
+
+        # If current group sum exceeds or is close to the target, finalize the group
+        if current_sum >= target_sum and len(groups) < num_groups - 1:
+            groups.append(current_group)
+            current_group = []
+            current_sum = 0
+
+    # Add remaining indices to the last group
+    groups.append(current_group)
+    
+    return groups
+
+
+
+
+def train_nets_parralel(network,train_dataset, test_dataset,trial=0, epochs=100,num_nets=200,batch_size=16,g_t=None,exp_root=None,min_epochs=400,slope_epochs=2):
     results = []
     gpu_num=4
-    idxes_all = [list(range(0,50)),list(range(50,100)),list(range(100,150)),list(range(150,200))]
+    print("parralel")
+    print("epochs,min_epochs,slope_epochs: ",epochs,min_epochs,slope_epochs)
+    
+
+    numbers = [int((epochs-min_epochs)*(1-i/200)**slope_epochs+min_epochs) for i in range(200)]
+    idxes_all = get_group_indices(numbers)
     # idxes_all = [list(range(0,100)),list(range(100,200))]
     
     devices = [f'cuda:{i}' for i in range(gpu_num)]
     with mp.get_context('spawn').Pool(processes=4) as pool:
-        args = [(network, train_dataset, test_dataset,devices[i % gpu_num], idxes, trial,epochs,batch_size,g_t,exp_root) for i, idxes in enumerate(idxes_all)]
+        args = [(network, train_dataset, test_dataset,devices[i % gpu_num], idxes, trial,epochs,batch_size,g_t,exp_root,min_epochs,slope_epochs,i) for i, idxes in enumerate(idxes_all)]
         results = pool.starmap(train_nets_process, args)
 
     loss_array= results[0][1]
@@ -745,8 +1096,7 @@ def train_nets_parralel(network,train_dataset, test_dataset,trial=0, epochs=100,
 
 
 
-
-def train_noisemodel(root, network="NetworkNoise2",epochs=60, dataset_size=128*8, n_samples=640000,batch_size=16,g_t=None,num_steps=200):
+def train_noisemodel(root, network="NetworkNoise2",epochs=60, dataset_size=128*8, n_samples=640000,batch_size=16,g_t=None,num_nets=200,min_epochs=400,slope_epochs=2,noise_type=None):
     print("starting ----")
 
     print(root)
@@ -790,19 +1140,24 @@ def train_noisemodel(root, network="NetworkNoise2",epochs=60, dataset_size=128*8
             speech_path = snr_df["clean_wav"][train_idx]
             noisy_path = snr_df["noisy_wav"][train_idx]
             noise_whole, sr = torchaudio.load(noise_path)
-            
-            if noise_idx=="1":
-                ar_coefs = [0.9]
-            elif noise_idx=="2":
-                ar_coefs = [0.6,-0.1, 0.2]
-                order=3
-            elif noise_idx=="3":
-                ar_coefs = [-0.9]
-            else:
-                print("unknown noise")
-                continue
+            if noise_type=="simple_ar":
+                if noise_idx=="1":
+                    ar_coefs = [0.9]
+                elif noise_idx=="2":
+                    ar_coefs = [0.6,-0.1, 0.2]
+                    order=3
+                elif noise_idx=="3":
+                    ar_coefs = [-0.9]
+                else:
+                    print("unknown noise")
+                    continue
+            elif noise_type=="complicated_ar":
+                if noise_idx=="1":
+                    ar_coefs = [ 0.4,-0.1, 0.1, -0.05,0.03]
+                else:
+                    print("unknown noise")
+                    continue
 
-            
             # n_samples = 64000
             ar_noise_batch = create_ar_noise_batch( batch_size=dataset_size, n_samples=n_samples, ar_coefs=ar_coefs, order=len(ar_coefs))
             stop = math.floor(n_samples/sr-1)
@@ -823,7 +1178,9 @@ def train_noisemodel(root, network="NetworkNoise2",epochs=60, dataset_size=128*8
 
             
             print("starting training")
-            nets,loss_array,loss_test_array = train_nets_parralel(network,train_full_tensors, test_full_tensors,trial,epochs=epochs,num_nets=200,batch_size=batch_size,g_t=g_t)
+            # nets,loss_array,loss_test_array = train_nets_parralel(network,train_full_tensors, test_full_tensors,trial,epochs=epochs,num_nets=200,batch_size=batch_size,g_t=g_t)#
+            nets,loss_array,loss_test_array = train_nets_parralel(network,train_full_tensors, test_full_tensors,trial,epochs=epochs,num_nets=num_nets,batch_size=batch_size,g_t=g_t,exp_root=exp_root,min_epochs=min_epochs,slope_epochs=slope_epochs)
+
             print("end 1 training")
             
             params_dict = {"nets": nets, "train_dataset": None, "test_dataset": None,"ar_coefs":None, "loss_array":loss_array, "loss_test_array": loss_test_array, "ar_noise": None, "noise_scaling": cur_noise_scaling, "snr": str(int(cur_snr)), "noise_name": noise_idx, "noise_path": noise_path}
@@ -927,29 +1284,38 @@ def create_wav_dirs(exp_root):
     return names
 
 
-def create_noises(exp_root):
+def create_noises(exp_root, noise_type):
     noisees_rooot = Path(exp_root)/"noises"
     n_samples = 16000*6
     sample_rate = 16000
-    ar_coefs = [0.9]
-    noise1 = create_ar_noise(n_samples, ar_coefs,order=1, dtype=torch.float32)
+    if noise_type=="simple_ar":
+        ar_coefs = [0.9]
+        noise1 = create_ar_noise(n_samples, ar_coefs,order=len(ar_coefs), dtype=torch.float32)
 
-    ar_coefs = [0.6,-0.1, 0.2]
-    noise2 = create_ar_noise(n_samples, ar_coefs,order=3, dtype=torch.float32)
+        ar_coefs = [0.6,-0.1, 0.2]
+        noise2 = create_ar_noise(n_samples, ar_coefs,order=len(ar_coefs), dtype=torch.float32)
 
-    ar_coefs = [-0.9]
-    noise3 = create_ar_noise(n_samples, ar_coefs,order=1, dtype=torch.float32)
+        ar_coefs = [-0.9]
+        noise3 = create_ar_noise(n_samples, ar_coefs,order=len(ar_coefs), dtype=torch.float32)
 
 
-    tar_noisypath = (noisees_rooot)/"1.wav"
-    torchaudio.save(tar_noisypath, noise1, sample_rate,encoding="PCM_F")
+        tar_noisypath = (noisees_rooot)/"1.wav"
+        torchaudio.save(tar_noisypath, noise1, sample_rate,encoding="PCM_F")
 
-    tar_noisypath = (noisees_rooot)/"2.wav"
-    torchaudio.save(tar_noisypath, noise2, sample_rate,encoding="PCM_F")
+        tar_noisypath = (noisees_rooot)/"2.wav"
+        torchaudio.save(tar_noisypath, noise2, sample_rate,encoding="PCM_F")
 
-    tar_noisypath = (noisees_rooot)/"3.wav"
-    torchaudio.save(tar_noisypath, noise3, sample_rate,encoding="PCM_F")
-    noises = ["1","2","3"]
+        tar_noisypath = (noisees_rooot)/"3.wav"
+        torchaudio.save(tar_noisypath, noise3, sample_rate,encoding="PCM_F")
+        noises = ["1","2","3"]
+    elif noise_type=="complicated_ar":
+        ar_coefs = [ 0.4,-0.1, 0.1, -0.05,0.03]
+        noise1 = create_ar_noise(n_samples, ar_coefs,order=len(ar_coefs), dtype=torch.float32)
+
+        tar_noisypath = (noisees_rooot)/"1.wav"
+        torchaudio.save(tar_noisypath, noise1, sample_rate,encoding="PCM_F")
+
+        noises = ["1"]
     return noises
 
 
@@ -1065,18 +1431,35 @@ def noise_waves(exp_root, snr_array=[5]):
 
 
 if __name__ == '__main__':
-    with open("exps_configs/m_ar_short_much.yaml", "r") as f:
+    parser = argparse.ArgumentParser(description="train noise for guidence")
+    parser.add_argument(
+        "-config",
+        default="exps_configs/m_ar_short_much.yaml",
+    )
+    args = parser.parse_args()
+    print(f"\nDir: {args.config}\n")
+
+    with open(args.config, "r") as f:
         trials = yaml.safe_load(f)
+    
+    
     s_array = trials.get("s_array", [])
     snr_array = trials.get("snr_array", [])
     exp_root = trials.get("exp_root", "")
     network = trials["network"] 
     epochs = trials.get("epochs", 0) 
+    min_epochs=trials.get("min_epochs", 1500) 
+    slope_epochs=trials.get("slope_epochs", 2) 
     batch_size = trials.get("batch_size", 0) 
     dataset_size = eval(trials.get("dataset_size", "0"))
     n_samples = trials["n_samples"] 
     scheduler_type = trials.get("scheduler_type","linear")
     num_steps = trials.get("num_steps",200)
+    scheduler = trials.get("scheduler","60")
+    # test_start_sec = trials.get("test_start_sec",6)
+    # test_end_sec = trials.get("test_end_sec",10)
+    trained_model_path = trials.get("trained_model_path","0")
+    noise_type = trials.get("noise_type", "simple_ar") 
     
     betas=get_named_beta_schedule(scheduler_type, num_steps)
     alphas = 1.0 - betas
@@ -1085,14 +1468,18 @@ if __name__ == '__main__':
     
     
     names = create_wav_dirs(exp_root)
-    noises_names = create_noises(exp_root)
+    noises_names = create_noises(exp_root, noise_type=noise_type)
     
     snr_array = noise_waves(exp_root, snr_array=snr_array)
 
-    train_noisemodel(exp_root, network=network,epochs=epochs, dataset_size=dataset_size, n_samples=n_samples,batch_size=batch_size,g_t=g_t,num_steps=num_steps)#128*8
+    # train_noisemodel(exp_root, network=network,epochs=epochs, dataset_size=dataset_size, n_samples=n_samples,batch_size=batch_size,g_t=g_t,num_steps=num_steps)#128*8
+    train_noisemodel(exp_root, network=network,epochs=epochs, dataset_size=dataset_size, n_samples=n_samples,batch_size=batch_size,g_t=g_t,num_nets=num_steps,min_epochs=min_epochs,slope_epochs=slope_epochs,noise_type=noise_type)
+    run_network = network
 
     print("---run_exp---")
-    run_exp(exp_root, dirnames=names, cuda_idx="1",s_array=s_array)
+    # run_exp(exp_root, dirnames=names, cuda_idx="1",s_array=s_array)
+    run_exp(exp_root, dirnames=names,s_array=s_array, reset=False, s_schedule=scheduler, scheduler_type=scheduler_type,noise_mosel_path=trained_model_path, network=run_network)
+
     
     storm_root = str(Path(exp_root)/"storm")
     run_storm(exp_root,storm_root)

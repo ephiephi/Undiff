@@ -421,7 +421,7 @@ def reshape_signal(signal, batch_size):
 
 
 
-def train_noisemodel(root, network="NetworkNoise2",epochs=1800, dataset_size=1, n_samples=4,batch_size=2,g_t=None, num_nets=200):
+def train_noisemodel(root, network="NetworkNoise2",epochs=1800, dataset_size=1, n_samples=4,batch_size=2,g_t=None, num_nets=200,min_epochs=400,slope_epochs=2):
     print("starting training")
     print(root)
     
@@ -471,7 +471,7 @@ def train_noisemodel(root, network="NetworkNoise2",epochs=1800, dataset_size=1, 
 
             
             print("starting training")
-            nets,loss_array,loss_test_array = train_nets_parralel(network,train_full_tensors, test_full_tensors,trial,epochs=epochs,num_nets=num_nets,batch_size=batch_size,g_t=g_t,exp_root=exp_root)
+            nets,loss_array,loss_test_array = train_nets_parralel(network,train_full_tensors, test_full_tensors,trial,epochs=epochs,num_nets=num_nets,batch_size=batch_size,g_t=g_t,exp_root=exp_root,min_epochs=min_epochs,slope_epochs=slope_epochs)
             print("end 1 training")
             
             params_dict = {"nets": nets, "train_dataset": None, "test_dataset": None,"ar_coefs":None, "loss_array":loss_array, "loss_test_array": loss_test_array, "ar_noise": None, "noise_scaling": cur_noise_scaling, "snr": str(int(cur_snr)), "noise_name": noise_idx, "noise_path": noise_path}
@@ -737,7 +737,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="measure guided")
     parser.add_argument(
         "-config",
-        default="exps_configs/n_chosen.yaml",
+        default="exps_configs/n_chosen_whole_8gt.yaml",
     )
     args = parser.parse_args()
     print(f"\nDir: {args.config}\n")
@@ -748,13 +748,19 @@ if __name__ == '__main__':
     snr_array = trials.get("snr_array", [])
     exp_root = trials.get("exp_root", "")
     network = trials["network"] 
-    epochs = trials.get("epochs", 0) 
+    epochs = trials.get("epochs", 1500) 
+    min_epochs=trials.get("min_epochs", 1500) 
+    slope_epochs=trials.get("slope_epochs", 2) 
     batch_size = trials.get("batch_size", 0) 
     dataset_size = eval(trials.get("dataset_size", "0"))
     n_samples = trials["n_samples"] 
     scheduler_type = trials.get("scheduler_type","linear")
     num_steps = trials.get("num_steps",200)
     scheduler = trials.get("scheduler","60")
+    test_start_sec = trials.get("test_start_sec",6)
+    test_end_sec = trials.get("test_end_sec",10)
+    trained_model_path = trials.get("trained_model_path","0")
+
     
     betas=get_named_beta_schedule(scheduler_type, num_steps)
     alphas = 1.0 - betas
@@ -763,24 +769,25 @@ if __name__ == '__main__':
     
 
     output_pickle_path = Path(exp_root)/"5f_snrs.pickle"
-    # test_start_sec=9
-    # test_end_sec=10
-    test_start_sec=6
-    test_end_sec=10
+
+    
     save_audio = True
     if len(snr_array)==0:
         names, noises_names,snr_array = organize_wav_files(exp_root, output_pickle_path, num_train_seconds=test_start_sec, num_test_seconds=test_end_sec, save_audio=save_audio)
     else:
         names, noises_names,snr_array = organize_wav_files_snr_levels(exp_root, output_pickle_path, snr_array, num_train_seconds=test_start_sec, num_test_seconds=test_end_sec)
     
-    train_noisemodel(exp_root, network=network,epochs=epochs, dataset_size=dataset_size, n_samples=n_samples,batch_size=batch_size,g_t=g_t,num_nets=num_steps)
-    
+    run_network=None 
+    if trained_model_path == "0":
+        train_noisemodel(exp_root, network=network,epochs=epochs, dataset_size=dataset_size, n_samples=n_samples,batch_size=batch_size,g_t=g_t,num_nets=num_steps,min_epochs=min_epochs,slope_epochs=slope_epochs)
+    else:
+        run_network=  network
     
     print("---run_exp---")
-    run_exp(exp_root, dirnames=names, cuda_idx="3",s_array=s_array, reset=False, s_schedule=scheduler, scheduler_type=scheduler_type)
+    run_exp(exp_root, dirnames=names,s_array=s_array, reset=False, s_schedule=scheduler, scheduler_type=scheduler_type,noise_mosel_path=trained_model_path, network=run_network)
     
     storm_root = str(Path(exp_root)/"storm")
-    run_storm(exp_root,storm_root) #200 steps
+    # run_storm(exp_root,storm_root) #200 steps
     
     print("---analyzing---")
     analyze_exp(exp_root,noises_names,snr_array,names)

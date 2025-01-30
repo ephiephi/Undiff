@@ -54,6 +54,8 @@ def calc_measures(exp_dir,enhanced_dir,clean_dir,noisy_dir,snr_dirs):
         succeeded_noisy = 0
         print(f"dnsmos_local failed in {noisy_dir}")
 
+    metrics_keys = ['input_si_sdr', 'input_sdr', 'input_sir', 'input_sar', 'input_stoi', 'input_pesq', 'si_sdr', 'sdr', 'sir', 'sar', 'stoi', 'pesq']
+    
     if succeeded >0:
         data=[]
         for snr_dir in tqdm(snr_dirs): 
@@ -69,8 +71,12 @@ def calc_measures(exp_dir,enhanced_dir,clean_dir,noisy_dir,snr_dirs):
                     noisy_path =  Path(noisy_dir)/name
                     noisy_wav, _sr = torchaudio.load(noisy_path)
                     # Compute metrics
-                    metrics = get_metrics(clean=speech_wav[0].numpy(), mix=noisy_wav[0].numpy(),estimate=enhance[0].numpy(), sample_rate=en_sr)
+                    try:
+                        metrics = get_metrics(clean=speech_wav[0].numpy(), mix=noisy_wav[0].numpy(),estimate=enhance[0].numpy(), sample_rate=en_sr)
+                    except:
+                        metrics = {key: None for key in metrics_keys}
                     metrics["name"] = Path(path_).name
+                    metrics["s"] = float(str(Path(path_).name).split("s")[1])
                     metrics["filename"] = (ours)
                     metrics["snr"] = ours.split("snr")[1].split("/")[0]
                     if "noise" in Path(ours).name:
@@ -94,6 +100,7 @@ def calc_measures(exp_dir,enhanced_dir,clean_dir,noisy_dir,snr_dirs):
             # Compute metrics
             metrics = get_metrics(clean=speech_wav[0].numpy(), mix=noisy_wav[0].numpy(),estimate=noisy_wav[0].numpy(), sample_rate=en_sr)
             metrics["name"] = "noisy"
+            metrics["s"] = None
             metrics["filename"] = (cur_noisy_path)
             metrics["snr"] = cur_noisy_path.split("_snr")[1].split("_")[0]
             if "noise" in Path(cur_noisy_path).name:

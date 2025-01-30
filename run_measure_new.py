@@ -7,6 +7,7 @@ from measure_new import main_measure
 
 # exp_dir = "/data/ephraim/datasets/known_noise/enhanced_diffwave_1sec/"
 def main(root_dir,clean_dir, noisy_dir ):
+    """not write metrics for None files"""
     for d in glob(root_dir+"*/"):
         if Path(d).name not in ["noises", "clean_wav", "noisy_wav", "analysis", "storm", "cleans"]:
             # command = "python measure_new.py -exp_dir={}".format(d)
@@ -22,7 +23,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="measure guided")
     parser.add_argument(
         "-exp_dir",
-        default="/data/ephraim/datasets/known_noise/undiff_exps/exp_n_real/",
+        default="/data/ephraim/datasets/known_noise/undiff_exps/exp_n_chosen/",
     )
     parser.add_argument(
         "-clean_dir", default=""

@@ -583,7 +583,7 @@ def inference(cfg):
     )
 
     task.inference(
-        files_or_num, model, diffusion, cfg.sampling_rate, cfg.segment_size, DEVICE, cfg.guidance, cfg.guid_s, cfg.cur_noise_var,cfg.y_noisy, cfg.outpath, cfg.clean_wav, cfg.s_schedule, cfg.noise_type, cfg.noise_model_path, cfg.l_low
+        files_or_num, model, diffusion, cfg.sampling_rate, cfg.segment_size, DEVICE, cfg.guidance, cfg.guid_s, cfg.cur_noise_var,cfg.y_noisy, cfg.outpath, cfg.clean_wav, cfg.s_schedule, cfg.noise_type, cfg.noise_model_path, cfg.l_low, cfg.network
     )
 
 

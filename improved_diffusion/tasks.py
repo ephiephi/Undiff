@@ -91,6 +91,7 @@ class UnconditionalTask(AbstractTask):
         noise_type=None, 
         noise_model_path=None,
         l_low=0.2,
+        network=None,
     ):
         assert self.task_type == TaskType.UNCONDITIONAL
         fake_samples = []
@@ -118,6 +119,7 @@ class UnconditionalTask(AbstractTask):
                 noise_type=noise_type, 
                 noise_model_path=noise_model_path,
                 l_low=l_low,
+                network=network,
             ).cpu()
 
             fake_samples.append(sample)
