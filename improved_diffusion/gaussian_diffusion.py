@@ -27,7 +27,8 @@ import torch.nn.functional as F
 
 
 from scipy.signal import firwin
-
+from network_factory import *
+from network_factory2 import *
 
 
 def calculate_rolling_std_with_means(audio_tensor, means_tensor, window_size=10):
@@ -669,6 +670,7 @@ class GaussianDiffusion:
                     exponential_array = np.logspace(np.log(start_value), np.log(end_value), len(alphas), base=np.exp(basenum))
                     exponential_array = exponential_array/exponential_array[0]#*(s_guid_scheduler_sinusoidal
                     return 1-exponential_array
+                print("s_schedule: ", s_schedule)
                 s_scheduler = convex_(self.alphas, basenum=float(s_schedule))
                 
                 # def sinus_increase_range(alphas, range_=8):
@@ -693,8 +695,27 @@ class GaussianDiffusion:
                     
                     # mu, sig = noise_model(n_t)
                     # loss = noise_model.gaussian_nll_loss(mu, sig, n_t).to("cuda")
-                    loss = noise_model.calc_model_likelihood(mu, sig, n_t).to("cuda")
+                    try:
+                        loss = noise_model.calc_model_likelihood(mu, sig, n_t, offset=False).to("cuda")###false
+                    except:
+                        loss = noise_model.calc_model_likelihood(mu, sig, n_t).to("cuda")
                     # loss = loss*len()
+                    grad_log_p = -c3 * torch.autograd.grad(loss, n_t)[0]
+            elif noise_type == "loss_model_mog":
+                # print("--------loss_model_mog----------")
+                with torch.enable_grad():
+                    x_t = cur_mean[:].detach()#.requires_grad_(True)
+                    # print("noise_model:", noise_model)
+                    noise_model = noise_model.to("cuda")
+                    n_t = y_noisy - c3 * x_t
+                    n_t = n_t.requires_grad_(True)
+                    # mu, sig = noise_model(n_t,g_t)
+                    logits, mu, log_sig = noise_model(n_t, g_t)
+                    try:
+                        loss = noise_model.casual_loss(logits, mu, log_sig, n_t, offset=False).to("cuda")
+                    except:
+                        loss = noise_model.casual_loss(logits, mu, log_sig, n_t).to("cuda")
+                        
                     grad_log_p = -c3 * torch.autograd.grad(loss, n_t)[0]
             elif noise_type == "loss_model_sig10":
                 print("--------loss_model_sig10----------")
@@ -917,6 +938,7 @@ class GaussianDiffusion:
         noise_model_path=None,
         l_low=0.2,
         network=None,
+        mog=0,
     ):
         """
         Generate samples from the model.
@@ -968,6 +990,7 @@ class GaussianDiffusion:
             noise_model_path=noise_model_path,
             l_low=l_low,
             network=network,
+            mog=mog,
         ):
             final = sample
 
@@ -1001,6 +1024,7 @@ class GaussianDiffusion:
         noise_model_path=None,
         l_low=0.2,
         network=None,
+        mog=0,
     ):
         """
         Generate samples from the model and yield intermediate samples from
@@ -1075,7 +1099,56 @@ class GaussianDiffusion:
             rg_exps.add(TaskType.BWE)
 
 
+        from train_on_all_noises_wavenet import WaveNet
+        
+        def load_network_from_scrach(network, mog=None):
+            # Dynamically get the class from globals()
+            if network in globals():
+                if network.endswith("MoG") and mog is not None:
+                    return globals()[network](num_mixtures=mog)
+                elif network == "WaveNet":
+                    return WaveNet(
+                        in_channels=1,
+                        out_channels=2,
+                        residual_channels=32,
+                        skip_channels=64,
+                        kernel_size=3,
+                        dilation_depth=8,
+                        num_stacks=3
+                    )
+                else:
+                    return globals()[network]()
+            else:
+                raise ValueError(f"Unknown network: {network}")
+            
+        def load_network(network,state_dict, mog=None):
+            # Dynamically get the class from globals()
+            if network in globals():
+                if network.endswith("MoG") and mog is not None:
+                    model_ =  globals()[network](num_mixtures=mog)
+                    model_.load_state_dict(state_dict)
+                    return model_
+                elif network == "WaveNet":
+                    model_ =  WaveNet(
+                        in_channels=1,
+                        out_channels=2,
+                        residual_channels=32,
+                        skip_channels=64,
+                        kernel_size=3,
+                        dilation_depth=8,
+                        num_stacks=3
+                    )
+                    model_.load_state_dict(state_dict)
+                    return model_
+                else:
+                    model_ =  globals()[network]()
+                    model_.load_state_dict(state_dict)
+                    return model_
+            else:
+                raise ValueError(f"Unknown network: {network}")
+            
         import io
+        single_noise_model=False
         class CPU_Unpickler(pickle.Unpickler):
             def find_class(self, module, name):
                 if module == 'torch.storage' and name == '_load_from_bytes':
@@ -1083,64 +1156,110 @@ class GaussianDiffusion:
                 else: return super().find_class(module, name)
         
         if noise_model_path is not None and network is None:
-            if noise_type=="loss_model" or noise_type=="freq_nn" or noise_type=="loss_model_sig10":
+            if noise_type=="loss_model" or noise_type=="loss_model_mog" or noise_type=="freq_nn" or noise_type=="loss_model_sig10":
                 with open(noise_model_path, 'rb') as handle:
                     params_dict =  CPU_Unpickler(handle).load()
-                    # params_dict = pickle.load(handle)
                     print("noise_model_path: ", noise_model_path)
-                    noise_models = params_dict["nets"] 
+                    try:
+                        network = params_dict["network"]
+                        noise_models = [load_network(network,params_dict["nets"][k], mog=mog) for k in range(len(params_dict["nets"]))] 
+                    except:
+                        raise Exception("Error: network not found in params_dict")
+                        noise_models = params_dict["nets"] 
             elif noise_type=="loss_model_double":
                 with open(noise_model_path, 'rb') as handle:
                     params_dict =  CPU_Unpickler(handle).load()
                     print("noise_model_path: ", noise_model_path)
-                    noise_models_low = params_dict["nets_low"] 
-                    noise_models_high = params_dict["nets_high"] 
+                    try:
+                        network = params_dict["network"]
+                        # noise_models_low = [load_network(network, mog=mog) for _ in range(len(params_dict["nets_low"]))] 
+                        # noise_models_high = [load_network(network, mog=mog) for _ in range(len(params_dict["nets_high"]))] 
+                        noise_models_low = [load_network(network,params_dict["nets"][k], mog=mog) for k in range(len(params_dict["nets_low"]))] 
+                        noise_models_high = [load_network(network,params_dict["nets"][k], mog=mog) for k in range(len(params_dict["nets_high"]))] 
+                    except:
+                        noise_models_low = params_dict["nets_low"] 
+                        noise_models_high = params_dict["nets_high"] 
                     noise_models = (noise_models_low,noise_models_high)
             elif noise_type in ["freq_gaussian","freq_gaussian_complex","freq_gaussian_nolog"]:
                 with open(noise_model_path, 'rb') as handle:
                     params_dict = pickle.load(handle)
-                    noise_models = params_dict["models"] 
+                    try:
+                        network = params_dict["network"]
+                        # noise_models = [load_network(network, mog=mog) for _ in range(len(params_dict["models"]))] 
+                        noise_models = [load_network(network,params_dict["nets"][k], mog=mog) for k in range(len(params_dict["models"]))] 
+                    except:
+                        noise_models = params_dict["models"] 
         elif network is not None:
-            from create_exp_m import NetworkNoise8,NetworkNoise7, NetworkNoise6,NetworkNoise5,NetworkNoise4, NetworkNoise3, WaveNetCausalModel
-            from train_on_all_noises import WaveNet
-            # from train_on_all_noises_8_gt import NetworkNoise8
-            if network == "NetworkNoise8":
-                noise_model = NetworkNoise8()
-            if network == "NetworkNoise7":
-                noise_model = NetworkNoise7()
-            if network == "NetworkNoise6":
-                noise_model = NetworkNoise6()
-            if network == "NetworkNoise5":
-                noise_model = NetworkNoise5()
-            if network == "NetworkNoise4":
-                noise_model = NetworkNoise4()
-            if network == "NetworkNoise3":
-                noise_model = NetworkNoise3()
-            if network == "WaveNetCausalModel":
-                noise_model = WaveNetCausalModel()
-            if network == "WaveNet":
-                noise_model = WaveNet(
-                in_channels=1,
-                out_channels=2,
-                residual_channels=32,
-                skip_channels=64,
-                kernel_size=3,
-                dilation_depth=8,
-                num_stacks=3
-            )
-            noise_model.load_state_dict(torch.load(noise_model_path, map_location=torch.device(device)))
+            # from create_exp_m import NetworkNoise8,NetworkNoise7, NetworkNoise6,NetworkNoise6d,NetworkNoise9,NetworkNoise6c,NetworkNoise6b,NetworkNoise5,NetworkNoise4, NetworkNoise3, WaveNetCausalModel, NetworkNoiseWaveNetMoG, NetworkNoise6MoG, NetworkNoise4MoG
+
+            
+            noise_model = load_network_from_scrach(network,mog)
+            # if network == "Network2DNoise6":
+            #     noise_model = Network2DNoise6()
+            # if network == "NetworkNoise8":
+            #     noise_model = NetworkNoise8()
+            # if network == "NetworkNoise7":
+            #     noise_model = NetworkNoise7()
+            # if network == "NetworkNoise6":
+            #     noise_model = NetworkNoise6()
+            # if network == "NetworkNoise9":
+            #     noise_model = NetworkNoise9()
+            # if network == "NetworkNoise6b":
+            #     noise_model = NetworkNoise6b()
+            # if network == "NetworkNoise6c":
+            #     noise_model = NetworkNoise6c()
+            # if network == "NetworkNoise6d":
+            #     noise_model = NetworkNoise6d()
+            # if network == "NetworkNoise10":
+            #     noise_model = NetworkNoise10()
+            # if network == "NetworkNoise5":
+            #     noise_model = NetworkNoise5()
+            # if network == "NetworkNoise4":
+            #     noise_model = NetworkNoise4()
+            # if network == "NetworkNoise3":
+            #     noise_model = NetworkNoise3()
+            # if network == "WaveNetCausalModel":
+            #     noise_model = WaveNetCausalModel()
+            # if network == "NetworkNoiseWaveNetMoG":
+            #     model = NetworkNoiseWaveNetMoG(num_mixtures=mog)
+            # if network =="NetworkNoise6MoG":
+            #     model = NetworkNoise6MoG(num_mixtures=mog)
+            # if network =="NetworkNoise6bMoG":
+            #     model = NetworkNoise6bMoG(num_mixtures=mog)
+            # if network =="NetworkNoise6cMoG":
+            #     model = NetworkNoise6cMoG(num_mixtures=mog)
+            # if network =="NetworkNoise6dMoG":
+            #     model = NetworkNoise6dMoG(num_mixtures=mog)
+            # if network =="NetworkNoise4MoG":
+            #     model = NetworkNoise4MoG(num_mixtures=mog)
+            # if network == "WaveNet":
+            #     noise_model = WaveNet(
+            #     in_channels=1,
+            #     out_channels=2,
+            #     residual_channels=32,
+            #     skip_channels=64,
+            #     kernel_size=3,
+            #     dilation_depth=8,
+            #     num_stacks=3
+            # )
+            noise_model.load_state_dict(torch.load(noise_model_path, map_location=device))
             noise_model.eval()
             noise_model.to(device)
+            single_noise_model = True
             
         
         loss_array=[]
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
             if network is not None:
-                noise_model = noise_model
-            elif noise_models is not None and noise_type!="loss_model_double":
+                # if "noise_model" in locals():
+                if single_noise_model:
+                    noise_model = noise_model
+                else:
+                    noise_model = noise_models[i]
+            elif  (noise_model_path is not None and network is None) and noise_type!="loss_model_double":
                 noise_model = noise_models[i]
-                if noise_type=="loss_model" or noise_type=="loss_model_sig10":
+                if noise_type=="loss_model" or  noise_type=="loss_model_mog" or noise_type=="loss_model_sig10":
                     noise_model = noise_model.to(device)
             else:
                 noise_models_low,noise_models_high = noise_models
