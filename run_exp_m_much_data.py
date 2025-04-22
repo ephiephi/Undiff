@@ -17,7 +17,7 @@ def run_command(cmd):
         print(f"Completed: {cmd}")
         
 
-def run_exp(exp_dir, dirnames, s_array=None,reset=False,s_schedule="60",scheduler_type="linear",noise_mosel_path="0", network=None):
+def run_exp(exp_dir, dirnames, s_array=None,reset=False,s_schedule="60",scheduler_type="linear",noise_mosel_path="0", network=None,mog=0):
     outdirname=f"enhanced_60" #attention: always 60
     diffusion = None
     if scheduler_type == "cosine":
@@ -75,7 +75,7 @@ def run_exp(exp_dir, dirnames, s_array=None,reset=False,s_schedule="60",schedule
                 
                 for s in s_array: 
                     gpu_idx  = (gpu_idx+1)%4
-                    # gpu_idx=1
+                    # gpu_idx  = 2
                     print(gpu_idx)
                     newOUTPATH = os.path.join(OUTPATH,"s{}".format(s))
                     if not os.path.exists(newOUTPATH):
@@ -85,7 +85,14 @@ def run_exp(exp_dir, dirnames, s_array=None,reset=False,s_schedule="60",schedule
                         run_network="null"
                         if network is not None:
                             run_network = network
-                        command = f"HYDRA_FULL_ERROR=2 CUDA_VISIBLE_DEVICES={gpu_idx} python main.py diffusion={diffusion} model=diffwave task=unconditional output_dir=results/guided audio_dir=1 guid_s={s} y_noisy={wav} outpath={newOUTPATH} s_schedule={s_schedule} noise_type=loss_model noise_model_path={noise_model_path} network={run_network}"#
+                        loss_model = "loss_model"
+                        if run_network.endswith("MoG") or mog>0:
+                            if mog<1:
+                                print("attention: mog is not set")
+                                raise Exception
+                            loss_model = "loss_model_mog"
+                        
+                        command = f"HYDRA_FULL_ERROR=2 CUDA_VISIBLE_DEVICES={gpu_idx} python main.py diffusion={diffusion} model=diffwave task=unconditional output_dir=results/guided audio_dir=1 guid_s={s} y_noisy={wav} outpath={newOUTPATH} s_schedule={s_schedule} noise_type={loss_model} noise_model_path={noise_model_path} network={run_network} mog={mog}"#
                         commands.append(command)
                         # os.system(command)
                     else:

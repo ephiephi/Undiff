@@ -1194,60 +1194,14 @@ class GaussianDiffusion:
 
             
             noise_model = load_network_from_scrach(network,mog)
-            # if network == "Network2DNoise6":
-            #     noise_model = Network2DNoise6()
-            # if network == "NetworkNoise8":
-            #     noise_model = NetworkNoise8()
-            # if network == "NetworkNoise7":
-            #     noise_model = NetworkNoise7()
-            # if network == "NetworkNoise6":
-            #     noise_model = NetworkNoise6()
-            # if network == "NetworkNoise9":
-            #     noise_model = NetworkNoise9()
-            # if network == "NetworkNoise6b":
-            #     noise_model = NetworkNoise6b()
-            # if network == "NetworkNoise6c":
-            #     noise_model = NetworkNoise6c()
-            # if network == "NetworkNoise6d":
-            #     noise_model = NetworkNoise6d()
-            # if network == "NetworkNoise10":
-            #     noise_model = NetworkNoise10()
-            # if network == "NetworkNoise5":
-            #     noise_model = NetworkNoise5()
-            # if network == "NetworkNoise4":
-            #     noise_model = NetworkNoise4()
-            # if network == "NetworkNoise3":
-            #     noise_model = NetworkNoise3()
-            # if network == "WaveNetCausalModel":
-            #     noise_model = WaveNetCausalModel()
-            # if network == "NetworkNoiseWaveNetMoG":
-            #     model = NetworkNoiseWaveNetMoG(num_mixtures=mog)
-            # if network =="NetworkNoise6MoG":
-            #     model = NetworkNoise6MoG(num_mixtures=mog)
-            # if network =="NetworkNoise6bMoG":
-            #     model = NetworkNoise6bMoG(num_mixtures=mog)
-            # if network =="NetworkNoise6cMoG":
-            #     model = NetworkNoise6cMoG(num_mixtures=mog)
-            # if network =="NetworkNoise6dMoG":
-            #     model = NetworkNoise6dMoG(num_mixtures=mog)
-            # if network =="NetworkNoise4MoG":
-            #     model = NetworkNoise4MoG(num_mixtures=mog)
-            # if network == "WaveNet":
-            #     noise_model = WaveNet(
-            #     in_channels=1,
-            #     out_channels=2,
-            #     residual_channels=32,
-            #     skip_channels=64,
-            #     kernel_size=3,
-            #     dilation_depth=8,
-            #     num_stacks=3
-            # )
+
             noise_model.load_state_dict(torch.load(noise_model_path, map_location=device))
             noise_model.eval()
             noise_model.to(device)
             single_noise_model = True
             
         
+        # xt_history={}
         loss_array=[]
         for i in indices:
             t = th.tensor([i] * shape[0], device=device)
@@ -1295,6 +1249,7 @@ class GaussianDiffusion:
                     diffusion_idx=i,
                     l_low=l_low 
                 )
+            # xt_history[i] = out["sample"]
             loss_array.append(str(out["loss"]))
             
             if sample_method == TaskType.SOURCE_SEPARATION:

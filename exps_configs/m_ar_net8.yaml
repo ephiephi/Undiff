@@ -5,8 +5,8 @@ network: "NetworkNoise8"
 epochs: 30
 min_epochs: 5
 slope_epochs: 2
-dataset_size: 128*8
-n_samples: 320000
-batch_size: 16
+dataset_size: 128*4
+n_samples: 160000
+batch_size: 8
 snr_array: ["5"]
 noise_type: complicated_ar

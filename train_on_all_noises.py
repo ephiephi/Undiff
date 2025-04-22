@@ -12,6 +12,79 @@ import numpy as np
 from tqdm import tqdm
 
 from torch.utils.data import Dataset, DataLoader
+import logging
+
+def setup_logging(model_path):
+    """Set up logging to save logs in the same directory as the model."""
+    model_dir = os.path.dirname(model_path)
+    os.makedirs(model_dir, exist_ok=True)  # Ensure the directory exists
+
+    log_file = os.path.join(model_dir, "training_log.txt")
+
+    logging.basicConfig(
+        level=logging.INFO, 
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(log_file, mode="w"),  # Save logs to file
+            logging.StreamHandler()  # Print logs to console
+        ]
+    )
+
+    return log_file
+
+###############################################################################
+# 0) Minimal CausalConv1dClassS Implementation (Replace if you already have it)
+###############################################################################
+class CausalConv1dClassS(nn.Conv1d):
+    """
+    A simple causal convolution layer. 
+    Expects input shape (B, C_in, T).
+    'causal' means we left-pad by (kernel_size - 1) * dilation 
+    and then trim the extra on the right.
+    """
+    def __init__(self, in_channels, out_channels, kernel_size, dilation=1, bias=True):
+        super().__init__(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=kernel_size,
+            dilation=dilation,
+            padding=(kernel_size - 1) * dilation,
+            bias=bias
+        )
+
+    def forward(self, x):
+        # Perform the convolution
+        out = super().forward(x)
+        # Remove the trailing padding on the right so that it is causal
+        if self.padding[0] > 0:
+            out = out[:, :, :-self.padding[0]]
+        return out
+
+
+def load_checkpoint(model, optimizer, checkpoint_path, device):
+    """Load model and optimizer state from checkpoint if available."""
+    if os.path.exists(checkpoint_path):
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state'])
+        optimizer.load_state_dict(checkpoint['optimizer_state'])
+        step_counter = checkpoint['step_counter']
+        logging.info(f"Resumed training from checkpoint: {checkpoint_path}, Step {step_counter}")
+        return step_counter
+    else:
+        logging.info("No checkpoint found, starting training from scratch.")
+        return 0  # Start from step 0 if no checkpoint
+
+def save_checkpoint(model, optimizer, checkpoint_path, step_counter):
+    """Save model, optimizer, and step counter to checkpoint."""
+    checkpoint = {
+        'model_state': model.state_dict(),
+        'optimizer_state': optimizer.state_dict(),
+        'step_counter': step_counter
+    }
+    torch.save(checkpoint, checkpoint_path)
+    logging.info(f"Checkpoint saved at step {step_counter}: {checkpoint_path}")
+
+
 
 ###############################################################################
 # 1) Noise Schedule Helpers
@@ -38,7 +111,6 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
         beta_end   = 0.02
         return np.linspace(beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64)
     elif schedule_name == "cosine":
-        # Example of a "cosine" schedule:
         return betas_for_alpha_bar(
             num_diffusion_timesteps,
             lambda t: math.cos((t + 0.008) / 1.008 * math.pi / 2) ** 2,
@@ -48,189 +120,18 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
 
 
 ###############################################################################
-# 2) WaveNet Implementation
+# 2) The NetworkNoise3 Architecture (Instead of WaveNet)
 ###############################################################################
-class CausalConv1d(nn.Conv1d):
-    """
-    A simple causal convolution layer.
-    Expects input shape (B, C_in, T).
-    We achieve 'causal' behavior by left-padding and cutting off the right.
-    """
-    def __init__(self, in_channels, out_channels, kernel_size, dilation=1, bias=True):
-        super().__init__(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
-            dilation=dilation,
-            padding=(kernel_size - 1) * dilation,
-            bias=bias
-        )
+import torch
+import torch.nn as nn
 
-    def forward(self, x):
-        out = super().forward(x)
-        # Remove the trailing padding on the right
-        if self.padding[0] > 0:
-            out = out[:, :, :-self.padding[0]]
-        return out
-
-
-class GatedResidualBlock(nn.Module):
-    """
-    A WaveNet-like residual block with:
-      - 1x1 conv to expand channels
-      - gated activation (tanh * sigmoid)
-      - skip connection to an external 'skip' path
-      - residual connection back to input
-    """
-    def __init__(self, 
-                 in_channels, 
-                 residual_channels, 
-                 skip_channels, 
-                 kernel_size, 
-                 dilation):
-        super().__init__()
-
-        # 1x1 to transform from in_channels -> residual_channels
-        self.conv_in = nn.Conv1d(in_channels, residual_channels, kernel_size=1)
-
-        # Gated convolution layers
-        self.conv_filter = CausalConv1d(
-            residual_channels,
-            residual_channels,
-            kernel_size=kernel_size,
-            dilation=dilation
-        )
-        self.conv_gate   = CausalConv1d(
-            residual_channels,
-            residual_channels,
-            kernel_size=kernel_size,
-            dilation=dilation
-        )
-
-        # 1x1 conv for skip connection
-        self.conv_skip = nn.Conv1d(residual_channels, skip_channels, kernel_size=1)
-
-        # 1x1 conv for residual
-        self.conv_out = nn.Conv1d(residual_channels, in_channels, kernel_size=1)
-
-        self.tanh = nn.Tanh()
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        """
-        x: (B, in_channels, T)
-        returns: (residual_out, skip_out)
-        """
-        # Project up to residual_channels
-        residual = self.conv_in(x)  # (B, residual_channels, T)
-
-        # Gated activation
-        filter_out = self.tanh(self.conv_filter(residual))
-        gate_out   = self.sigmoid(self.conv_gate(residual))
-        gated = filter_out * gate_out  # (B, residual_channels, T)
-
-        # Skip connection
-        skip_out = self.conv_skip(gated)  # (B, skip_channels, T)
-
-        # Residual connection (project back to in_channels)
-        residual_out = self.conv_out(gated) + x  # (B, in_channels, T)
-
-        return residual_out, skip_out
-
-
-class WaveNet(nn.Module):
-    """
-    A WaveNet-like model that predicts the mean and std (via log_var) for
-    each audio sample.
-    """
-    def __init__(self,
-                 in_channels=1,    # 1D audio
-                 out_channels=2,   # predict (mean, log_var)
-                 residual_channels=32,
-                 skip_channels=64,
-                 kernel_size=3,
-                 dilation_depth=8,  # number of layers in a stack
-                 num_stacks=1):
-        super().__init__()
-        self.kernel_size = kernel_size
-
-        self.blocks = nn.ModuleList()
-
-        # Build the stacks of dilated conv blocks
-        for _ in range(num_stacks):
-            for i in range(dilation_depth):
-                dilation = 2 ** i
-                block = GatedResidualBlock(
-                    in_channels=in_channels,
-                    residual_channels=residual_channels,
-                    skip_channels=skip_channels,
-                    kernel_size=kernel_size,
-                    dilation=dilation
-                )
-                self.blocks.append(block)
-
-        # Final layers from skip-connection
-        self.skip_conv1 = nn.Conv1d(skip_channels, skip_channels, kernel_size=1)
-        self.skip_conv2 = nn.Conv1d(skip_channels, out_channels, kernel_size=1)
-        self.relu = nn.ReLU()
-
-    def forward(self, x):
-        """
-        x: (B, 1, T)
-        returns: means: (B, T), stds: (B, T)
-        """
-        skip_accumulator = 0
-        out = x  # shape: (B, 1, T)
-
-        for block in self.blocks:
-            out, skip = block(out)
-            skip_accumulator += skip
-
-        skip = self.relu(self.skip_conv1(skip_accumulator))
-        output = self.skip_conv2(skip)  # (B, 2, T)
-
-        means   = output[:, 0, :]
-        log_var = output[:, 1, :]
-        stds    = torch.exp(0.5 * log_var)
-
-        return means, stds
-
-    def gaussian_nll_loss(self, means, stds, target):
-        """
-        Negative log-likelihood under N(means, stds).
-        target: (B, 1, T)
-        means/stds: (B, T)
-        
-        The slicing below implies:
-          output[t] is used to predict target[t+1].
-          So we shift by +1 for the target and omit the last frame of the output.
-        """
-        # Squeeze channel dimension if shape is (B,1,T)
-        target = target.squeeze(1)  # (B, T)
-
-        # Minimal trimming by kernel_size to account for initial context
-        # plus a shift for next-sample prediction
-        trim = self.kernel_size
-        target = target[:, trim+1:]
-        means_ = means[:, trim:-1]
-        stds_  = stds[:, trim:-1]
-
-        # log N(x|mu,sigma) = - log(sigma*sqrt(2pi)) - 0.5*((x-mu)/sigma)^2
-        log_coef = -torch.log(stds_ * np.sqrt(2*np.pi))
-        log_exp  = -0.5 * ((target - means_) ** 2) / (stds_ ** 2)
-
-        log_prob_per_timestep = log_coef + log_exp  # (B, T_after_trim)
-        log_prob_per_seq = torch.sum(log_prob_per_timestep, dim=1)  # sum over time
-        avg_log_prob = torch.mean(log_prob_per_seq, dim=0)          # mean over batch
-
-        return -avg_log_prob  # negative log-likelihood
 
 
 ###############################################################################
 # 3) AudioDataset with Diffusion-Based Noise Augmentation
 ###############################################################################
 class AudioDataset(Dataset):
-    def __init__(self, file_list, g_t, transform=None):
+    def __init__(self, file_list, g_t, transform=None, add_diffusion_noise=False):
         """
         file_list: list of paths to .wav files
         g_t: a 1D tensor containing values for the diffusion noise scaling
@@ -240,9 +141,11 @@ class AudioDataset(Dataset):
         self.file_list = file_list
         self.transform = transform
         self.g_t = g_t  # shape: (num_diffusion_timesteps,)
+        self.add_diffusion_noise = add_diffusion_noise
 
         # Max length to avoid excessive RAM
         self.max_length = 320000
+        # self.max_length = 160000
 
     def __len__(self):
         return len(self.file_list)
@@ -254,22 +157,20 @@ class AudioDataset(Dataset):
         # If stereo or multi-channel, mix down to mono
         if waveform.size(0) > 1:
             waveform = torch.mean(waveform, dim=0, keepdim=True)
-        
-        # If waveform is longer than 320,000, truncate it
+
+        # Truncate if longer than 320k
         if waveform.shape[-1] > self.max_length:
             waveform = waveform[..., :self.max_length]
 
-        # Optional: apply transform (e.g., normalization)
+        # Optional: apply transform
         if self.transform:
             waveform = self.transform(waveform, sr)
 
-        # ---- Diffusion Noise Augmentation ----
-        # Pick a random index i from g_t
-        i = random.randint(0, len(self.g_t) - 1)
-        # Create Gaussian noise of the same shape as waveform
-        cur_white_noise_diffusion = torch.randn_like(waveform)
-        # Add the noise scaled by g_t[i]
-        waveform = waveform + cur_white_noise_diffusion * self.g_t[i]
+        if self.add_diffusion_noise:
+            # Diffusion Noise Augmentation
+            i = random.randint(0, len(self.g_t) - 1)
+            noise = torch.randn_like(waveform)
+            waveform = waveform + noise * self.g_t[i]
 
         return waveform  # shape: (1, T)
 
@@ -278,36 +179,37 @@ def collate_fn(batch):
     Collate a list of waveforms (each shape: (1, T_i)) into 
     a single tensor (B, 1, T_max), zero-padding shorter waveforms if needed.
     """
-    # Find max length in this batch
     max_len = max(waveform.shape[-1] for waveform in batch)
-
-    # Initialize a tensor of shape (B, 1, max_len) with zeros
     batch_size = len(batch)
-    batched_waveforms = torch.zeros(batch_size, 1, max_len, dtype=batch[0].dtype)
 
+    batched_waveforms = torch.zeros(batch_size, 1, max_len, dtype=batch[0].dtype)
     for i, waveform in enumerate(batch):
         length = waveform.shape[-1]
         batched_waveforms[i, :, :length] = waveform
 
     return batched_waveforms
 
+
 ###############################################################################
 # 4) Training & Evaluation Functions
 ###############################################################################
-def train_one_epoch(model, dataloader, optimizer, device, step_counter, save_path=None):
-    """
-    train_one_epoch now tracks the number of steps globally.
-    If save_path is provided, we save the model every 50 steps.
-    """
+def train_one_epoch(model, dataloader, optimizer, device, step_counter, save_path=None, test_loader=None,mog=None):
     model.train()
     total_loss = 0.0
     num_samples = 0
 
     for batch_waveforms in tqdm(dataloader):
         batch_waveforms = batch_waveforms.to(device)  # (B, 1, T)
-        means, stds = model(batch_waveforms)
 
-        loss = model.gaussian_nll_loss(means, stds, batch_waveforms)
+        
+        if mog:
+            logits, means, log_sig = model(batch_waveforms, cur_gt=None)
+            loss = model.casual_loss(logits, means, log_sig, batch_waveforms)
+        else:
+            # Forward pass
+            means, stds = model(batch_waveforms, cur_gt=None)
+            # Compute negative log-likelihood
+            loss = model.casual_loss(means, stds, batch_waveforms)
 
         optimizer.zero_grad()
         loss.backward()
@@ -317,25 +219,40 @@ def train_one_epoch(model, dataloader, optimizer, device, step_counter, save_pat
         total_loss += loss.item() * batch_size
         num_samples += batch_size
 
-        step_counter[0] += 1  # increment global step
-        # Save the model every 50 steps (if desired)
-        if save_path is not None and (step_counter[0] % 50) == 0:
-            current_step_path = save_path.replace("model", f"model_step{step_counter[0]}")
-            print(f"[Step {step_counter[0]}] Saving model to {current_step_path}")
-            torch.save(model.state_dict(), current_step_path)
+        # Update global step
+        step_counter += 1
+        
 
-    return total_loss / num_samples
+        # Save every 1000 steps
+        if save_path is not None and ((step_counter % 1000) == 0 or (step_counter ==10)):
+            current_step_path = save_path.replace("model", f"model_step{step_counter}")
+            logging.info(f"[Step {step_counter}] Saving model to {current_step_path}")
+            # torch.save(model.state_dict(), current_step_path)
+            save_checkpoint(model, optimizer, current_step_path, step_counter)
+        if (step_counter % 10000) == 0:
+            test_loss = evaluate(model, test_loader, device,mog)
+            logging.info(f"[Step {step_counter}] | test loss: {test_loss}")
+
+    return total_loss / num_samples, step_counter
 
 @torch.no_grad()
-def evaluate(model, dataloader, device):
+def evaluate(model, dataloader, device,mog):
     model.eval()
     total_loss = 0.0
     num_samples = 0
 
     for batch_waveforms in dataloader:
         batch_waveforms = batch_waveforms.to(device)
-        means, stds = model(batch_waveforms)
-        loss = model.gaussian_nll_loss(means, stds, batch_waveforms)
+        
+        
+        if mog:
+            logits, means, log_sig = model(batch_waveforms, cur_gt=None)
+            loss = model.casual_loss(logits, means, log_sig, batch_waveforms)
+        else:
+            means, stds = model(batch_waveforms, cur_gt=None)
+            loss = model.casual_loss(means, stds, batch_waveforms)            
+        # means, stds = model(batch_waveforms, cur_gt=None)
+        # loss = model.casual_loss(means, stds, batch_waveforms)
 
         batch_size = batch_waveforms.size(0)
         total_loss += loss.item() * batch_size
@@ -343,68 +260,98 @@ def evaluate(model, dataloader, device):
 
     return total_loss / num_samples
 
+
 ###############################################################################
 # 5) Main
 ###############################################################################
 def main():
-    parser = argparse.ArgumentParser(description="WaveNet Training for Mean/Std Prediction with Diffusion Noise Augmentation")
-    parser.add_argument('--data_dir', type=str,  default="/data/ephraim/datasets/DNS-Challenge_old/datasets/noise",
+    parser = argparse.ArgumentParser(description="NetworkNoise Training with/out Diffusion Noise Augmentation")
+    parser.add_argument('--data_dir', type=str, default="/data/ephraim/datasets/DNS-Challenge_old/datasets/noise",
                         help="Path to directory containing .wav files.")
-    parser.add_argument('--test_files', type=str, nargs='*', default=[],
-                        help="List of filenames that must go to the test set (space-separated).")
+    parser.add_argument('--test_files', type=str, nargs='*', default=['wntLte49djU.wav', 'mPlJSgPoiAw.wav', '1DUIzBDv17s.wav', 'ycHlCbP3Gvc.wav', 'uQl3_7PRgiU.wav', 'door_Freesound_validated_458454_3.wav', 'fan_Freesound_validated_361372_19.wav', 'door_Freesound_validated_439434_0.wav', 'door_Freesound_validated_385420_2.wav', 'breath_spit_Freesound_validated_26803_1.wav', 'zRhCXaEYN6I.wav', 'yH4huWPvzfM.wav', 'door_Freesound_validated_179351_3.wav', '2ErbvVnLS3Q.wav', 'PwnYHHLddCM.wav', 'FPKLZ3tHdkU.wav', 'door_Freesound_validated_323558_0.wav', 'iBXl2PXRb-8.wav', 'c257oj8370c.wav', 'fan_Freesound_validated_329714_0.wav', 'R4J9yOJFkb8.wav', '8TI_QD0vvQ4.wav', '1BonlocdKno.wav', 'OFVzrakJhbw.wav', 'XcIpvyl4es0.wav', 'NeXK6-kYUzA.wav', 'typing_Freesound_validated_390343_7.wav', 'QMYTtaizBCI.wav', 'LoiPr_bDqow.wav', 'cp-cFndaRcM.wav', '3ezEit7AyZo.wav', 'eMVevP1mwt8.wav', 's_dSo-zSGDg.wav', 'fCe9bJVte3k.wav', 'LohqmNzxccQ.wav'],
+                        help="List of filenames that must go to the test set (space-separated). or: path to a text file containing the test file paths.")
+    # parser.add_argument('--test_files', type=str, nargs='*', default="/data/ephraim/datasets/known_noise/undiff_exps/training_all/pure_noises_netwavenet_mog/testset.txt", \
+    #     help="List of filenames that must go to the test set (space-separated). or: path to a text file containing the test file paths.")
+    
     parser.add_argument('--batch_size', type=int, default=1)
-    parser.add_argument('--epochs', type=int, default=50)
+    parser.add_argument('--epochs', type=int, default=5)
     parser.add_argument('--lr', type=float, default=1e-3)
-    parser.add_argument('--kernel_size', type=int, default=3)
-    parser.add_argument('--dilation_depth', type=int, default=8)
-    parser.add_argument('--num_stacks', type=int, default=3)
-    parser.add_argument('--residual_channels', type=int, default=32)
-    parser.add_argument('--skip_channels', type=int, default=64)
-    parser.add_argument('--save_model_path', type=str, default="/data/ephraim/datasets/known_noise/undiff_exps/training_all/all_noises_b/model.pth",
-                        help="If provided, save the trained model state dict (e.g. 'model.pth').")
-    parser.add_argument('--save_test_list', type=str, default="/data/ephraim/datasets/known_noise/undiff_exps/training_all/all_noises_b/testset.txt",
+    parser.add_argument('--network', type=str, default="NetworkNoiseWaveNetMoG")
+    parser.add_argument('--save_model_path', type=str, default="/data/ephraim/datasets/known_noise/undiff_exps/training_all/pure_noises_netwavenet_mog/model.pth",
+                        help="Path to save model state dict (e.g. 'model.pth').")
+    parser.add_argument('--save_test_list', type=str, default=None,
                         help="If provided, save the test file paths to this text file.")
+    parser.add_argument('--mog', action='store_true', help="Use mixture of Gaussians")
+    parser.add_argument('--no-mog', dest='mog', action='store_false', help="Use single Gaussian")
+    parser.set_defaults(mog=True)
+    parser.add_argument('--num_mixtures', type=int, default=5,
+                        help="Number of mixtures for the mixture of gaussians.")
     parser.add_argument('--diffusion_steps', type=int, default=200,
                         help="Number of diffusion timesteps for the noise schedule.")
     parser.add_argument('--noise_schedule', type=str, default="linear",
                         help="Type of beta schedule: 'linear' or 'cosine'.")
-    args = parser.parse_args()
 
-    # 1) Gather all .wav files from data_dir
+    args = parser.parse_args()
+    random.seed(42)
+    
+    if args.save_test_list == "None":
+        args.save_test_list = None
+    
+    # **Set up logging**
+    log_file = setup_logging(args.save_model_path)
+    logging.info(f"Logging to: {log_file}")
+
+    # 1) Gather all .wav files
     all_wav_paths = sorted(glob.glob(os.path.join(args.data_dir, '*.wav')))
 
-    # 2) Separate test files (exact filename match) from training
+    # 2) Split train/test
     test_paths = []
     train_paths = []
-    test_basenames = set(args.test_files)
+    defined_test=False
+    if os.path.exists(str(args.test_files)) or os.path.exists(str(args.save_test_list)):
+        test_path = str(args.test_files)
+        if not os.path.exists(str(args.test_files)):
+            test_path = args.save_test_list
+        with open(test_path, 'r', encoding='utf-8') as f:
+            test_basenames = set(os.path.basename(line.strip()) for line in f)
+        defined_test = True
+        logging.info(f"Loaded {len(test_basenames)} test files from: {args.test_files}")
+    else:
+        test_basenames = set(args.test_files)
 
     for path in all_wav_paths:
         basename = os.path.basename(path)
         if basename in test_basenames:
             test_paths.append(path)
         else:
-            train_paths.append(path)
+            if defined_test:
+                train_paths.append(path)
+            else:
+                if random.random() < 0.05:
+                    test_paths.append(path)
+                else:
+                    train_paths.append(path)
 
-    print(f"Found {len(train_paths)} training files, {len(test_paths)} test files.")
+    logging.info(f"Train Files: {len(train_paths)}, Test Files: {len(test_paths)}")
 
-    # (Optional) Save the test list to a file
-    if args.save_test_list is not None:
-        print(f"Saving test file list to {args.save_test_list}")
+    # Optionally save the test list
+    if args.save_test_list:
+        logging.info(f"save test to: {args.save_test_list}")
+        os.makedirs(os.path.dirname(args.save_test_list), exist_ok=True)
         with open(args.save_test_list, 'w', encoding='utf-8') as f:
-            for test_file in test_paths:
-                f.write(test_file + "\n")
+            for tpath in test_paths:
+                f.write(tpath + "\n")
 
     # 3) Create the diffusion schedule
-    betas = get_named_beta_schedule(args.noise_schedule, args.diffusion_steps)  # shape: (diffusion_steps,)
+    betas = get_named_beta_schedule(args.noise_schedule, args.diffusion_steps)  # (diffusion_steps,)
     alphas = 1.0 - betas
-    alphas_cumprod = np.cumprod(alphas, axis=0)  # shape: (diffusion_steps,)
-    alphas_cumprod_t = torch.from_numpy(alphas_cumprod).float()  # convert to torch
-    # g_t = sqrt( (1 - alpha_cumprod) / alpha_cumprod )
+    alphas_cumprod = np.cumprod(alphas, axis=0)
+    alphas_cumprod_t = torch.from_numpy(alphas_cumprod).float()
     g_t = torch.sqrt((1.0 - alphas_cumprod_t) / alphas_cumprod_t)
 
     # 4) Create Datasets
     train_dataset = AudioDataset(train_paths, g_t=g_t)
-    test_dataset  = AudioDataset(test_paths,  g_t=g_t)
+    test_dataset  = AudioDataset(test_paths, g_t=g_t)
 
     # 5) Create DataLoaders
     train_loader = DataLoader(train_dataset,
@@ -416,48 +363,75 @@ def main():
                               shuffle=False,
                               collate_fn=collate_fn)
 
-    # 6) Instantiate the model
-    model = WaveNet(
+    # 6) Instantiate NetworkNoise
+    from create_exp_m import NetworkNoise8,NetworkNoise7, NetworkNoise6,NetworkNoise5,NetworkNoise4, NetworkNoise3, WaveNetCausalModel,NetworkNoiseWaveNetMoG,NetworkNoise6MoG,NetworkNoiseWaveNetMoG2
+    from train_on_all_noises_wavenet import WaveNet
+    # from train_on_all_noises_8_gt import NetworkNoise8
+    network = args.network
+    if network == "NetworkNoise8":
+        model = NetworkNoise8()
+    if network == "NetworkNoise7":
+        model = NetworkNoise7()
+    if network == "NetworkNoise6":
+        model = NetworkNoise6()
+    if network == "NetworkNoise5":
+        model = NetworkNoise5()
+    if network == "NetworkNoise4":
+        model = NetworkNoise4()
+    if network == "NetworkNoise3":
+        model = NetworkNoise3()
+    if network == "WaveNetCausalModel":
+        model = WaveNetCausalModel()
+    if network == "NetworkNoiseWaveNetMoG":
+        model = NetworkNoiseWaveNetMoG(num_mixtures=args.num_mixtures)
+    if network == "NetworkNoiseWaveNetMoG2":
+        model = NetworkNoiseWaveNetMoG2(num_mixtures=args.num_mixtures)
+    if network =="NetworkNoise6MoG":
+        model = NetworkNoise6MoG(num_mixtures=args.num_mixtures)
+    if network == "WaveNet":
+        model = WaveNet(
         in_channels=1,
         out_channels=2,
-        residual_channels=args.residual_channels,
-        skip_channels=args.skip_channels,
-        kernel_size=args.kernel_size,
-        dilation_depth=args.dilation_depth,
-        num_stacks=args.num_stacks
+        residual_channels=32,
+        skip_channels=64,
+        kernel_size=3,
+        dilation_depth=8,
+        num_stacks=3
     )
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model.to(device)
+    # device = torch.device('cpu')
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print("deviceis: ", device)
+    
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    
+    model.to(device)
 
-    # We'll track the global step in a list so it can be passed by reference
-    global_step = [0]  # single-element list
+    # Track global steps for saving
+    global_step = load_checkpoint(model, optimizer, args.save_model_path, device)
 
     # 7) Training loop
     for epoch in range(args.epochs):
-        train_loss = train_one_epoch(
+        train_loss,global_step = train_one_epoch(
             model, train_loader, optimizer, device,
             step_counter=global_step,
-            save_path=args.save_model_path  # pass the save path for every-50-steps saving
+            save_path=args.save_model_path, test_loader=test_loader,mog=args.mog
         )
         if len(test_paths) > 0:
-            test_loss = evaluate(model, test_loader, device)
-            print(f"Epoch {epoch+1}/{args.epochs} | "
+            test_loss = evaluate(model, test_loader, device, args.mog)
+            logging.info(f"Epoch {epoch+1}/{args.epochs} | "
                   f"Train Loss: {train_loss:.4f} | Test Loss: {test_loss:.4f}")
         else:
-            print(f"Epoch {epoch+1}/{args.epochs} | Train Loss: {train_loss:.4f} | No test set provided.")
+            logging.info(f"Epoch {epoch+1}/{args.epochs} | Train Loss: {train_loss:.4f} | No test set provided.")
 
-    # Final test evaluation (optional)
+    # Final test eval (optional)
     if len(test_paths) > 0:
-        final_test_loss = evaluate(model, test_loader, device)
-        print(f"Final Test Loss: {final_test_loss:.4f}")
+        final_test_loss = evaluate(model, test_loader, device,args.mog)
+        logging.info(f"Final Test Loss: {final_test_loss:.4f}")
 
-    # 8) (Optional) Save model one last time
-    if args.save_model_path is not None:
-        print(f"Saving final model state dict to {args.save_model_path}")
-        torch.save(model.state_dict(), args.save_model_path)
+    # 8) Save final model
+    if args.save_model_path:
+        save_checkpoint(model, optimizer, args.save_model_path, global_step)
 
 
 if __name__ == "__main__":
