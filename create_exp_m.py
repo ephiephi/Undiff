@@ -628,7 +628,7 @@ def get_group_indices(numbers, num_groups=4):
 
 def train_nets_parralel(network,train_dataset, test_dataset,trial=0, epochs=100,num_nets=200,batch_size=16,g_t=None,exp_root=None,min_epochs=400,slope_epochs=2,mog=0,lr=None,one_network=False,scheduler=None):
     results = []
-    gpu_num=1
+    gpu_num=4
     if one_network:
         gpu_num=1
     logging.info("parralel")

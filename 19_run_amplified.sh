@@ -1,8 +1,16 @@
 #!/bin/bash
 
-factors=(3 8 15 20 40 80 120 150 300 500 800)
+# factors=(3 8 15 20 40 80 120 150 300 500 800)
+
+# for i in "${factors[@]}"; do
+#     echo "python create_exp_n_real.py -config exps_configs/o_net3_6_amplified_${i}.yaml"
+#     python create_exp_n_real.py -config "exps_configs/o_net3_6_amplified_${i}.yaml"
+# done
+
+
+factors=(4.5 5 5.5 7 12 14)
 
 for i in "${factors[@]}"; do
-    echo "python create_exp_n_real.py -config exps_configs/o_net3_6_amplified_${i}.yaml"
-    python create_exp_n_real.py -config "exps_configs/o_net3_6_amplified_${i}.yaml"
+    echo "python create_exp_n_real.py -config exps_configs/o_net18_amplified_${i}.yaml"
+    python create_exp_n_real.py -config "exps_configs/o_net18_amplified_${i}.yaml"
 done
