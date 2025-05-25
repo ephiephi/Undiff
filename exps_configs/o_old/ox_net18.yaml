@@ -1,0 +1,24 @@
+# searching for s, many files:
+# s_array: [0.09,0.1,0.11,0.15]
+s_array: [0.07,0.09,0.1,0.11,0.15,0.16,0.18,0.2,0.23,0.25,0.28,0.3,0.35,0.4]
+# s_array: [3,5,10,20,30,50,100,200,500,1000,3000,10000,100000]
+exp_root: "/data/ephraim/datasets/known_noise/undiff_exps/exp_ox_net18/"
+network: "NetworkNoise18"
+epochs: 50
+min_epochs: 30
+slope_epochs: 8
+
+dataset_size: 1*1
+n_samples: 15
+batch_size: 1
+snr_array: ["5"]
+test_start_sec: 4
+test_end_sec: 9
+test_start_sec_noise: 220
+test_end_sec_noise: 225
+val_len: 5
+mog: 0
+lr: 0.006
+training_scheduler: "step"
+loss_model: "loss_model_x"
+

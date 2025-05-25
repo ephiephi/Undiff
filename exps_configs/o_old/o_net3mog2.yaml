@@ -1,0 +1,18 @@
+# searching for s, many files:
+s_array: [0.00001,0.0001,0.001,0.09,0.1,0.11,0.15,0.16,0.18,0.2,0.23,0.25,0.28,0.3,0.35,0.4,0.45]
+exp_root: "/data/ephraim/datasets/known_noise/undiff_exps/exp_o_net3mog2/"
+network: "NetworkNoise3MoG"
+epochs: 45
+min_epochs: 30
+slope_epochs: 8
+dataset_size: 1*1
+n_samples: 15
+batch_size: 1
+snr_array: ["5"]
+test_start_sec: 4
+test_end_sec: 9
+test_start_sec_noise: 220
+test_end_sec_noise: 225
+val_len: 5
+mog: 2
+lr: 0.0005

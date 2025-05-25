@@ -1,7 +1,7 @@
 defaults:
   - task: unconditional
   - model: diffwave
-  - diffusion: gaussian_diffusion_cosine
+  - diffusion: gaussian_diffusion
   - _self_
 
 output_dir: results/guided
@@ -11,17 +11,14 @@ segment_size: null
 sampling_rate: 16000
 device: cuda
 guidance: true
-guid_s: 0.07
+guid_s: 0.1
 cur_noise_var: null
-y_noisy: /data/ephraim/datasets/known_noise/undiff_exps/exp_o_net3_6mog2/6/noisy_wav/noise6_book_buccaneer1_snr5_fileid_6.wav
-outpath: /data/ephraim/datasets/known_noise/undiff_exps/exp_o_net3_6mog2/6/enhanced_60/snr5/s1e-05
+y_noisy: /data/ephraim/datasets/known_noise/undiff_exps/exp_p4_net3_6/18/noisy_wav/noise18_LJ050-0271_snr5_fileid_18.wav
+outpath: /data/ephraim/datasets/known_noise/undiff_exps/exp_p4_net3_6/18/enhanced_60/snr5/s0.1
 clean_wav: null
 s_schedule: 60
-noise_type: loss_model
-noise_model_path: /data/ephraim/datasets/known_noise/undiff_exps/exp_o_net3_6mog2/6/0_snr5_6_models.pickle
+noise_type: y_model
+noise_model_path: /data/ephraim/datasets/known_noise/undiff_exps/exp_p4_net3_6/18/0_snr5_18_models.pickle
 l_low: 0.2
 network: null #"NetworkNoise8"
-mog: 2
-
-#  'network=null', 'mog=0']
-
+mog: 0
