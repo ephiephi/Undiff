@@ -17,8 +17,8 @@ def run_command(cmd):
         print(f"Completed: {cmd}")
         
 
-def run_exp(exp_dir, dirnames, s_array=None,reset=False,s_schedule="60",scheduler_type="linear",noise_mosel_path="0", network=None,mog=0):
-    outdirname=f"enhanced_60" #attention: always 60
+def run_exp(exp_dir, dirnames, s_array=None,reset=False,s_schedule="60",scheduler_type="linear",noise_mosel_path="0", network=None,mog=0,loss_model="loss_model",outdirname="enhanced_60"):
+    #attention: always 60
     diffusion = None
     if scheduler_type == "cosine":
         diffusion = "gaussian_diffusion_cosine"
@@ -81,11 +81,12 @@ def run_exp(exp_dir, dirnames, s_array=None,reset=False,s_schedule="60",schedule
                     if not os.path.exists(newOUTPATH):
                         os.mkdir(newOUTPATH)
                     outwavpath = os.path.join(newOUTPATH, os.path.basename(wav))
-                    if not os.path.exists(outwavpath):
+                    # if not os.path.exists(outwavpath):
+                    if True:
                         run_network="null"
                         if network is not None:
                             run_network = network
-                        loss_model = "loss_model"
+                        
                         if run_network.endswith("MoG") or mog>0:
                             if mog<1:
                                 print("attention: mog is not set")

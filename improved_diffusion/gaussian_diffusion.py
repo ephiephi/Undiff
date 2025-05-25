@@ -682,13 +682,45 @@ class GaussianDiffusion:
             cur_s = _extract_into_tensor(guid_s*s_scheduler, t, x.shape)
             # cur_s = _extract_into_tensor(guid_s*10*np.ones(s_scheduler.shape), t, x.shape)
 
-            
-            if noise_type == "loss_model":
+            if noise_type == "y_model":
+                # print("--------y_model----------")
+                with torch.enable_grad():
+                    mu_theta = cur_mean[:].detach()#.requires_grad_(True)
+                    y_model = noise_model.to("cuda")
+                    #n_t = y_noisy - c3 * x_t
+                    mu_theta = mu_theta.requires_grad_(True)
+                    # mu, sig = noise_model(n_t,"none" )
+                    mu, log_sigma = y_model(mu_theta,y_noisy) ###x_t|x=mu_theta
+                    
+                    try:
+                        loss = y_model.casual_loss(mu, log_sigma, y_noisy, offset=False).to("cuda")
+                    except:
+                        loss = y_model.casual_loss(mu, log_sigma, y_noisy).to("cuda")
+                    grad_log_p = -c3 * torch.autograd.grad(loss, mu_theta)[0]
+            elif noise_type == "loss_model":
                 # print("--------loss_model----------")
                 with torch.enable_grad():
                     x_t = cur_mean[:].detach()#.requires_grad_(True)
                     noise_model = noise_model.to("cuda")
                     n_t = y_noisy - c3 * x_t
+                    n_t = n_t.requires_grad_(True)
+                    # mu, sig = noise_model(n_t,"none" )
+                    mu, sig = noise_model(n_t,g_t)
+                    
+                    # mu, sig = noise_model(n_t)
+                    # loss = noise_model.gaussian_nll_loss(mu, sig, n_t).to("cuda")
+                    try:
+                        loss = noise_model.calc_model_likelihood(mu, sig, n_t, offset=False).to("cuda")###false
+                    except:
+                        loss = noise_model.calc_model_likelihood(mu, sig, n_t).to("cuda")
+                    # loss = loss*len()
+                    grad_log_p = -c3 * torch.autograd.grad(loss, n_t)[0]
+            elif noise_type == "loss_model_x":
+                # print("--------loss_model_x----------")
+                with torch.enable_grad():
+                    x_t = cur_mean[:].detach()#.requires_grad_(True)
+                    noise_model = noise_model.to("cuda")
+                    n_t = y_noisy - c3 * x
                     n_t = n_t.requires_grad_(True)
                     # mu, sig = noise_model(n_t,"none" )
                     mu, sig = noise_model(n_t,g_t)
@@ -1156,7 +1188,7 @@ class GaussianDiffusion:
                 else: return super().find_class(module, name)
         
         if noise_model_path is not None and network is None:
-            if noise_type=="loss_model" or noise_type=="loss_model_mog" or noise_type=="freq_nn" or noise_type=="loss_model_sig10":
+            if noise_type=="loss_model" or noise_type=="y_model" or noise_type=="loss_model_x" or noise_type=="loss_model_mog" or noise_type=="freq_nn" or noise_type=="loss_model_sig10":
                 with open(noise_model_path, 'rb') as handle:
                     params_dict =  CPU_Unpickler(handle).load()
                     print("noise_model_path: ", noise_model_path)
@@ -1213,7 +1245,7 @@ class GaussianDiffusion:
                     noise_model = noise_models[i]
             elif  (noise_model_path is not None and network is None) and noise_type!="loss_model_double":
                 noise_model = noise_models[i]
-                if noise_type=="loss_model" or  noise_type=="loss_model_mog" or noise_type=="loss_model_sig10":
+                if noise_type=="loss_model" or noise_type=="y_model" or noise_type=="loss_model_x" or  noise_type=="loss_model_mog" or noise_type=="loss_model_sig10":
                     noise_model = noise_model.to(device)
             else:
                 noise_models_low,noise_models_high = noise_models

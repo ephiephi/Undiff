@@ -162,10 +162,9 @@ def process_wav_file(wav_path, start_seconds, end_seconds, sample_rate=16000):
     audio, sr = torchaudio.load(wav_path)
     if sr != sample_rate:
         audio = F.resample(audio, sr, sample_rate)
-    sr=sample_rate
-    start_sample = int(start_seconds * sr)
-    end_sample = int(end_seconds * sr)
-    return audio, sr, start_sample, end_sample
+    start_sample = int(start_seconds * sample_rate)
+    end_sample = int(end_seconds * sample_rate)
+    return audio, sample_rate, start_sample, end_sample
 
 
 def add_metadata(df, idx, snr, noise_scaling, file_id, noisy_path, noise_path, clean_path, train_noise_path):
@@ -631,7 +630,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="measure guided")
     parser.add_argument(
         "-config",
-        default="exps_configs/o_net3_6_training_on_test.yaml",
+        default="exps_configs/o3x_net3_6.yaml",
     )
     args = parser.parse_args()
 
@@ -661,7 +660,10 @@ if __name__ == '__main__':
     one_network = trials.get("one_network", False) 
     training_scheduler = trials.get("training_scheduler", None) 
     train_on_test = trials.get("train_on_test", False)
-    print(train_on_test)
+    loss_model = trials.get("loss_model", "loss_model")
+    s_scheduler = trials.get("s_inference_scheduler", "enhanced_60")
+    
+    print("loss_model: ",loss_model )
     
     log_file = setup_logging(exp_root)
     logging.info(f"\nDir: {args.config}\n")
@@ -693,7 +695,7 @@ if __name__ == '__main__':
     # noises_names = ["6","18"]
     
     logging.info("---run_exp---")
-    run_exp(exp_root, dirnames=names,s_array=s_array, reset=False, s_schedule=scheduler, scheduler_type=scheduler_type,noise_mosel_path=trained_model_path, network=run_network,mog=mog)
+    run_exp(exp_root, dirnames=names,s_array=s_array, reset=False, s_schedule=scheduler, scheduler_type=scheduler_type,noise_mosel_path=trained_model_path, network=run_network,mog=mog,loss_model=loss_model,outdirname=s_scheduler)
     
     storm_root = str(Path(exp_root)/"storm")
     run_storm(exp_root,storm_root) #200 steps

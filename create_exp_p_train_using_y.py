@@ -122,78 +122,116 @@ def calculate_scaling_factor(clean_audio, noise_audio, target_snr):
 
 
 import torchaudio
-def train(dataloader, model, optimizer, criterion, alpha_bars, num_epochs, device):
-    """Train on a dataset of pairs (x0, y), where y = x0 + AR_noise."""
-    model.train()
-    for epoch in range(num_epochs):
-        for x0, y in dataloader:
-            # Ensure x0, y are 3D tensors: [B, C, L]
-            if x0.dim() == 2: 
-                x0 = x0.unsqueeze(1)    # add channel dim if missing (for e.g. [B,L] -> [B,1,L])
-            if y.dim() == 2:
-                y = y.unsqueeze(1)
-            x0, y = x0.to(device), y.to(device)
-            B = x0.size(0)  # batch size
-            # Sample random timesteps for each sample in the batch
-            t = torch.randint(0, len(alpha_bars), (B,), device=device)  # shape [B]
-            # Gather ᾱ_t for each sample and reshape for broadcasting
-            a_bar_t = alpha_bars[t]                   # shape [B]
-            a_bar_t = a_bar_t[:, None, None]          # shape [B,1,1] for broadcasting over [B,C,L]
-            # Sample Gaussian noise for each sample
-            eps = torch.randn_like(x0)                # same shape as x0 [B,C,L]
-            # **Compute x_t from clean x0** for each sample
-            x_t = torch.sqrt(a_bar_t) * x0 + torch.sqrt(1 - a_bar_t) * eps
-            # Model predicts y (noisy signal) from x_t
-            y_pred = model(x_t, t)
-            loss = criterion(y_pred, y)               # compare to noisy target y
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-        # ... (any logging or epoch-end operations)
+def train(clean_data, num_steps=200, epochs=50, scheduler="linear",
+               device="cuda"):
+
+    clean = clean_data.to(device)
+    ar_noise = sample_ar_noise(clean.shape[0], clean.shape[1], 0.9, .1, device)
+    factor = calculate_scaling_factor(clean, ar_noise, 5) #todo: for batch
+    y = clean + factor*ar_noise
+
+    # # --- add AR noise -----------------------------------------------------------
+    # y = clean + sample_ar_noise(batch, seq_len, 0.9, .1, device)
+
+    # --- diffusion schedule (forward process) -----------------------------------
+    betas = torch.tensor(get_named_beta_schedule(scheduler, num_steps),
+                         dtype=torch.float32, device=device)
+    alphas = 1 - betas
+    a_bar = torch.cumprod(alphas, 0)
+    sqrt_a_bar     = torch.sqrt(a_bar)           # (T,)
+    sqrt_one_minus = torch.sqrt(1 - a_bar)
+
+    # --- build list of independent step-models ----------------------------------
+    models = [GaussianARStepModel(channels=16, kernel=13, n_layers=4).to(device)
+              for _ in range(num_steps)]
+
+    # One optimiser for **all** parameters
+    opt = torch.optim.Adam(itertools.chain(*(m.parameters() for m in models)),
+                           lr=3e-4)
+
+    # --- training loop ----------------------------------------------------------
+    for epoch in range(1, epochs + 1):
+        total = 0.
+        for t in range(num_steps):          # 0 ...T-1 
+            net = models[t]
+            eps = torch.randn_like(y)
+            x_t = sqrt_a_bar[t] * y + sqrt_one_minus[t] * eps
+
+            mu, log_sigma = net(x_t, y)              # forward
+            # inv_var = torch.exp(-2 * log_sigma)
+            # nll = (log_sigma + 0.5 * math.log(2 * math.pi)
+            #        + 0.5 * inv_var * (y - mu) ** 2).sum()
+            nll = net.casual_loss(mu, log_sigma, y)  
+            opt.zero_grad()
+            nll.backward()
+            opt.step()
+            total += nll.item()
+
+        if epoch % 10 == 0 or epoch == 1:
+            print(f"Epoch {epoch:3d} | avg-NLL {total/num_steps:.4f} "
+                  f"| a0={models[0].a():.3f} b0={models[0].b():.3f}"
+                  f"| a1={models[1].a():.3f} b1={models[1].b():.3f}"
+                    f"| a2={models[2].a():.3f} b2={models[2].b():.3f}")
+
+    return models   # ← list  [model_t for t=0..T-1]
 
 
 
+def train_ar(num_steps=200, epochs=500, scheduler="linear",
+               device="cuda"):
+    
+    import torchaudio
+    clean ,sr=  torchaudio.load(r"/data/ephraim/datasets/known_noise/undiff_exps2/exp_p_try/clean_wav/clean_fileid_0.wav")  
+    print("clean.shape:", clean.shape)  
+    clean = clean.to(device)
+    ar_noise = sample_ar_noise(clean.shape[0], clean.shape[1], 0.9, .1, device)
+    factor = calculate_scaling_factor(clean, ar_noise, 5) #todo: for batch
+    y = clean + factor*ar_noise
 
-def train_ar(x0, y, model, optimizer, criterion, alpha_bars, num_epochs, device, chunk_size=None):
-    """Train on a single sequence (clean signal x0 and noisy signal y = x0 + AR_noise)."""
-    model.train()
-    # Ensure x0 and y are 3D tensors: [batch, channels, length]
-    if x0.dim() == 1:
-        x0 = x0.unsqueeze(0)            # add batch dimension
-    if x0.dim() == 2:
-        x0 = x0.unsqueeze(1)            # add channel dimension
-    if y.dim() == 1:
-        y = y.unsqueeze(0)
-    if y.dim() == 2:
-        y = y.unsqueeze(1)
-    x0, y = x0.to(device), y.to(device)
+    # # --- add AR noise -----------------------------------------------------------
+    # y = clean + sample_ar_noise(batch, seq_len, 0.9, .1, device)
 
-    for epoch in range(num_epochs):
-        # If chunking is desired to preserve causality over long sequences
-        seq_length = x0.size(-1)
-        iter_ranges = [ (0, seq_length) ] if chunk_size is None else \
-                      [ (i, min(i+chunk_size, seq_length)) for i in range(0, seq_length, chunk_size) ]
-        for (start, end) in iter_ranges:
-            x0_segment = x0[..., start:end]   # segment of the clean signal
-            y_segment  = y[..., start:end]    # corresponding segment of noisy signal
-            # Sample a random timestep t (as a tensor of shape [1] since batch=1)
-            t = torch.randint(0, len(alpha_bars), (1,), device=device)
-            # Gather ᾱ_t (alpha_bar at time t) and reshape for broadcasting
-            a_bar_t = alpha_bars[t]                 # shape [1]
-            a_bar_t = a_bar_t.view(1, 1, 1)         # shape [1,1,1] for [B,C,L] broadcasting
-            # Sample Gaussian noise ε with same shape as x0_segment
-            eps = torch.randn_like(x0_segment)
-            # **Compute x_t from clean x0_segment (not from y)**:
-            x_t = torch.sqrt(a_bar_t) * x0_segment + torch.sqrt(1 - a_bar_t) * eps
-            # Model prediction for y from x_t
-            y_pred = model(x_t, t)
-            # Compute loss against the noisy target y_segment
-            loss = criterion(y_pred, y_segment)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-        # ... (any logging or epoch-related code)
+    # --- diffusion schedule (forward process) -----------------------------------
+    betas = torch.tensor(get_named_beta_schedule(scheduler, num_steps),
+                         dtype=torch.float32, device=device)
+    alphas = 1 - betas
+    a_bar = torch.cumprod(alphas, 0)
+    sqrt_a_bar     = torch.sqrt(a_bar)           # (T,)
+    sqrt_one_minus = torch.sqrt(1 - a_bar)
 
+    # --- build list of independent step-models ----------------------------------
+    models = [GaussianARStepModel(channels=64, kernel=3, n_layers=4).to(device)
+              for _ in range(num_steps)]
+
+    # One optimiser for **all** parameters
+    opt = torch.optim.Adam(itertools.chain(*(m.parameters() for m in models)),
+                           lr=3e-4)
+
+    # --- training loop ----------------------------------------------------------
+    for epoch in range(1, epochs + 1):
+        total = 0.
+        for t in range(num_steps):          # 0 ...T-1 
+            net = models[t]
+            eps = torch.randn_like(y)
+            x_t = sqrt_a_bar[t] * y + sqrt_one_minus[t] * eps
+
+            mu, log_sigma = net(x_t, y)              # forward
+            # inv_var = torch.exp(-2 * log_sigma)
+            # nll = (log_sigma + 0.5 * math.log(2 * math.pi)
+            #        + 0.5 * inv_var * (y - mu) ** 2).sum()
+            nll = net.casual_loss(mu, log_sigma, y)  
+            opt.zero_grad()
+            nll.backward()
+            opt.step()
+            total += nll.item()
+
+        if epoch % 10 == 0 or epoch == 1:
+            print(f"Epoch {epoch:3d} | avg-NLL {total/num_steps:.4f} "
+                  f"| a0={models[0].a():.3f} b0={models[0].b():.3f}"
+                  f"| a1={models[1].a():.3f} b1={models[1].b():.3f}"
+                    f"| a2={models[2].a():.3f} b2={models[2].b():.3f}")
+
+    return models   # ← list  [model_t for t=0..T-1]
 
 # ---------------------------------------------------------------------------
 # 6.  Example run
