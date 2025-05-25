@@ -1,0 +1,27 @@
+# searching for s, many files:
+# s_array: [0.09,0.1,0.11,0.15]
+s_array: [0.05,0.09,0.1,0.11,0.13,0.15,0.16,0.18,0.2,0.23,0.25,0.3,0.35,0.4,0.45]
+# s_array: [3,5,10,20,30,50,100,200,500,1000,3000,10000,100000]
+exp_root: "/data/ephraim/datasets/known_noise/undiff_exps/exp_o4_net16/"
+network: "NetworkNoise16"
+epochs: 50
+min_epochs: 30
+slope_epochs: 8
+# epochs: 2
+# min_epochs: 2
+# slope_epochs: 2
+
+dataset_size: 1*1
+n_samples: 15
+batch_size: 1
+snr_array: ["5"]
+test_start_sec: 0 
+test_end_sec: 7
+test_start_sec_noise: 218
+test_end_sec_noise: 225
+val_len: 2
+mog: 0
+lr: 0.01
+training_scheduler: "step"
+
+

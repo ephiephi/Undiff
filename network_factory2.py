@@ -251,6 +251,157 @@ class NetworkNoise18(NetworkNoiseClass):
 
 
 
+
+
+
+class NetworkNoise16b(NetworkNoiseClass):
+    """
+    18-layer network. Each layer:
+      - CausalConv1d + gating
+      - skip connection with input to that layer
+    Finally, we produce a 1×1 conv for means and log-variance.
+
+    The `dilations` here are an example sequence. Adapt as needed.
+    """
+    def __init__(self, kernel_size=50, channels=16):
+        super().__init__()
+        self.kernel_size = kernel_size
+
+        # If you want powers-of-two dilations, do something like:
+        # dilations = [2**i for i in range(18)]
+        # Or if you want the repeated pattern [1,2,4,8], repeated more times, define it here.
+        # For example, 18 layers repeating [1,2,4,8]:
+        # repeated = [1,2,4,8] * 5 (makes 20 layers, so you'd slice to 18)
+        # We'll just do powers-of-two for this example:
+        self.dilations = [1,1,1,1,1,1,1,1]
+
+        # We'll keep everything at 2 channels in/out, as in your original code.
+        # However, the first block has in_channels=1, the rest have in_channels=2.
+        self.blocks = nn.ModuleList()
+        
+        # The very first block goes from 1->2 channels
+        first_block = ResidualBlock(in_channels=1, out_channels=channels,
+                                    kernel_size=kernel_size, dilation=self.dilations[0])
+        self.blocks.append(first_block)
+        # The next 17 blocks will be 2->2
+        for d in self.dilations[1:]:
+            block = ResidualBlock(in_channels=channels, out_channels=channels,
+                                  kernel_size=kernel_size, dilation=d)
+            self.blocks.append(block)
+
+        # After all blocks, we output mean and log-var from 2 channels -> 1
+        self.conv_mean = nn.Conv1d(channels, 1, kernel_size=1)
+        self.conv_log_var = nn.Conv1d(channels, 1, kernel_size=1)
+
+        # Pre-calculate the receptive field
+        self.receptive_field = self.calculate_receptive_field()
+
+    def forward(self, x, cur_gt=None):
+        """
+        x: shape [B, 1, T], for example
+        We won't use 'cur_gt' inside the net, but keep the signature if needed.
+        """
+        out = x
+        for block in self.blocks:
+            out = block(out)  # each block has a skip connection inside
+
+        # Finally produce means & standard deviations
+        means = self.conv_mean(out).squeeze(1)
+        log_var = self.conv_log_var(out).squeeze(1)
+        stds = torch.exp(0.5 * log_var)
+        return means, stds
+
+    def calculate_receptive_field(self):
+        """
+        Summation of (kernel_size - 1)*dilation for all 18 layers, plus 1 for
+        the current time step.
+        """
+        total_rf = 1
+        for block in self.blocks:
+            # Access the underlying weight-normed conv
+            conv = block.conv
+            k = conv.kernel_size[0]
+            d = conv.dilation[0]
+            total_rf += (k - 1) * d
+        return total_rf
+
+
+
+class NetworkNoise16(NetworkNoiseClass):
+    """
+    18-layer network. Each layer:
+      - CausalConv1d + gating
+      - skip connection with input to that layer
+    Finally, we produce a 1×1 conv for means and log-variance.
+
+    The `dilations` here are an example sequence. Adapt as needed.
+    """
+    def __init__(self, kernel_size=50, channels=16):
+        super().__init__()
+        self.kernel_size = kernel_size
+
+        # If you want powers-of-two dilations, do something like:
+        # dilations = [2**i for i in range(18)]
+        # Or if you want the repeated pattern [1,2,4,8], repeated more times, define it here.
+        # For example, 18 layers repeating [1,2,4,8]:
+        # repeated = [1,2,4,8] * 5 (makes 20 layers, so you'd slice to 18)
+        # We'll just do powers-of-two for this example:
+        self.dilations = [1,1,2,2,2,4,4,8]
+
+        # We'll keep everything at 2 channels in/out, as in your original code.
+        # However, the first block has in_channels=1, the rest have in_channels=2.
+        self.blocks = nn.ModuleList()
+        
+        # The very first block goes from 1->2 channels
+        first_block = ResidualBlock(in_channels=1, out_channels=channels,
+                                    kernel_size=kernel_size, dilation=self.dilations[0])
+        self.blocks.append(first_block)
+        # The next 17 blocks will be 2->2
+        for d in self.dilations[1:]:
+            block = ResidualBlock(in_channels=channels, out_channels=channels,
+                                  kernel_size=kernel_size, dilation=d)
+            self.blocks.append(block)
+
+        # After all blocks, we output mean and log-var from 2 channels -> 1
+        self.conv_mean = nn.Conv1d(channels, 1, kernel_size=1)
+        self.conv_log_var = nn.Conv1d(channels, 1, kernel_size=1)
+
+        # Pre-calculate the receptive field
+        self.receptive_field = self.calculate_receptive_field()
+
+    def forward(self, x, cur_gt=None):
+        """
+        x: shape [B, 1, T], for example
+        We won't use 'cur_gt' inside the net, but keep the signature if needed.
+        """
+        out = x
+        for block in self.blocks:
+            out = block(out)  # each block has a skip connection inside
+
+        # Finally produce means & standard deviations
+        means = self.conv_mean(out).squeeze(1)
+        log_var = self.conv_log_var(out).squeeze(1)
+        stds = torch.exp(0.5 * log_var)
+        return means, stds
+
+    def calculate_receptive_field(self):
+        """
+        Summation of (kernel_size - 1)*dilation for all 18 layers, plus 1 for
+        the current time step.
+        """
+        total_rf = 1
+        for block in self.blocks:
+            # Access the underlying weight-normed conv
+            conv = block.conv
+            k = conv.kernel_size[0]
+            d = conv.dilation[0]
+            total_rf += (k - 1) * d
+        return total_rf
+
+
+
+
+
 class NetworkNoise17(NetworkNoiseClass):
     """
     18-layer network. Each layer:
@@ -622,3 +773,80 @@ class NetworkNoise3_6MoG(nn.Module):
             total_rf += (k - 1) * d
 
         return total_rf
+    
+    
+    
+    #--------------------------------------------------------------
+    
+class ResBlock(nn.Module):
+    def __init__(self, channels, kernel, dil):
+        super().__init__()
+        self.conv = CausalConv1dClassS(channels, channels, kernel, dilation=dil)
+    def forward(self, x):
+        return x + torch.relu(self.conv(torch.relu(x)))
+
+class CausalStack(nn.Module):
+    def __init__(self, channels=64, kernel=3, n_layers=4):
+        super().__init__()
+        self.inp = CausalConv1dClassS(1, channels, 1)
+        self.body = nn.Sequential(*[
+            ResBlock(channels, kernel, 2 ** i) for i in range(n_layers)
+        ])
+        self.out = CausalConv1dClassS(channels, 1, 1)
+    def forward(self, x):                 # x: (B,1,L)
+        h = self.body(torch.relu(self.inp(x)))
+        return self.out(torch.relu(h))    # (B,1,L)
+    
+class GaussianARStepModel(nn.Module):
+    """
+    Implements one diffusion-step model
+        μ_i = b · x_i + f_μ( y_{i-1} − a x_{i-1}, … )
+        σ_i = exp( f_logσ( … ) )
+
+    *a*, *b*, f_μ and f_logσ are unique to this instance.
+    (B,1,L) tensor format is kept throughout the forward pass.
+    """
+    def __init__(self, channels=16, kernel=13, n_layers=4):
+        super().__init__()
+        self.raw_a = nn.Parameter(torch.tensor(-1.0))   # sigmoid → a∈(0,1)
+        self.raw_b = nn.Parameter(torch.tensor( 1.0))   # sigmoid → b∈(0,1)
+        self.f_mu     = CausalStack(channels, kernel, n_layers)
+        self.f_logsig = CausalStack(channels, kernel, n_layers)
+
+    # learned scalars
+    def a(self): return torch.sigmoid(self.raw_a)
+    def b(self): return torch.sigmoid(self.raw_b)
+
+    # ------------------------------------------------------------------ #
+    # forward keeps shapes (B,1,L) — *no* squeeze                           #
+    # ------------------------------------------------------------------ #
+    def forward(self, x_t, y):
+        """
+        Args
+        ----
+        x_t : (B,1,L)  noisy input at step t
+        y   : (B,1,L)  clean / target waveform
+        Returns
+        -------
+        mu, log_sigma : each (B,1,L)
+        """
+        a, b = self.a(), self.b()                 # scalars
+
+        diff = y - a * x_t                        # (B,1,L)
+        # shift one step left so μ_i can’t peek at y_i
+        diff_shift = F.pad(diff, (1, 0))[:, :, :-1]     # (B,1,L)
+
+        mu_adj    = self.f_mu(diff_shift)               # (B,1,L)
+        log_sigma = self.f_logsig(diff_shift)           # (B,1,L)
+        mu = b * x_t + mu_adj
+        return mu, log_sigma
+
+    # unchanged NLL helpers (keep “sum” & sign convention exactly as you had)
+    def calc_model_likelihood(self, mu, log_sigma, y):
+        inv_var = torch.exp(-2 * log_sigma)
+        nll = -(log_sigma + 0.5 * math.log(2 * math.pi)
+                + 0.5 * inv_var * (y - mu) ** 2).sum()
+        return nll
+
+    def casual_loss(self, mu, log_sigma, y):
+        return -self.calc_model_likelihood(mu, log_sigma, y)

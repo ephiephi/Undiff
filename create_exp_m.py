@@ -82,6 +82,9 @@ from network_factory2 import *
 
 import logging
 
+
+    
+
 def setup_logging(exp_root):
     """Set up logging to save logs in the same directory as the model."""
     # model_dir = os.path.dirname(model_path)
