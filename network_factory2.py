@@ -850,3 +850,295 @@ class GaussianARStepModel(nn.Module):
 
     def casual_loss(self, mu, log_sigma, y):
         return -self.calc_model_likelihood(mu, log_sigma, y)
+    
+    
+    
+    #------------------------------------------------------------
+    
+    
+    
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn.utils import weight_norm
+
+
+# -----------------------------------------------------------
+# 1.  Gated residual block with weight-norm
+# -----------------------------------------------------------
+class GatedResBlock(nn.Module):
+    """
+    Input / output shape: (B, C, L)
+    A causal conv produces feature map h,
+    a 1×1 conv produces gate g,
+    output = x + tanh(h) * sigmoid(g)
+    """
+    def __init__(self, channels: int, kernel: int, dil: int):
+        super().__init__()
+        self.h = weight_norm(
+            CausalConv1dClassS(channels, channels, kernel, dilation=dil)
+        )
+        self.g = nn.Conv1d(channels, channels, kernel_size=1)
+
+    def forward(self, x):
+        h = self.h(x)
+        g = self.g(h)                      # gate uses the same receptive field
+        return x + torch.tanh(h) * torch.sigmoid(g)
+
+
+# -----------------------------------------------------------
+# 2.  Causal stack built from GatedResBlock
+# -----------------------------------------------------------
+class CausalStack2(nn.Module):
+    """
+    in:  (B, 1, L)
+    out: (B, 1, L)
+    """
+    def __init__(self, channels=64, kernel=3, n_layers=4):
+        super().__init__()
+        # 1×1 causal “embedding’’ layer
+        self.inp = weight_norm(CausalConv1dClassS(1, channels, kernel_size=1))
+        # dilations = 1,2,4,8,…
+        self.body = nn.Sequential(*[
+            GatedResBlock(channels, kernel, 2 ** i) for i in range(n_layers)
+        ])
+        # 1×1 “fully-connected’’ output layer (per-time-step FC)
+        self.out = nn.Conv1d(channels, 1, kernel_size=1)
+
+    def forward(self, x):                  # x: (B,1,L)
+        h = self.body(torch.tanh(self.inp(x)))
+        return self.out(torch.tanh(h))     # (B,1,L)
+
+
+# -----------------------------------------------------------
+# 3.  Gaussian AR step model that uses the new stack
+# -----------------------------------------------------------
+class GaussianARStepModel2(nn.Module):
+    """
+    μ_i = b · x_i + f_μ( y_{i−1} − a x_{i−1}, … )
+    σ_i = exp( f_logσ( … ) )
+    """
+    def __init__(self, channels=64, kernel=3, n_layers=4):
+        super().__init__()
+        self.raw_a = nn.Parameter(torch.tensor(10.0))  # sigmoid ≈ 1.0 # sigmoid → (0,1)
+        self.raw_b = nn.Parameter(torch.tensor(-4.595))  # sigmoid ≈ 0.01  # sigmoid → (0,1)
+
+        self.f_mu     = CausalStack2(channels, kernel, n_layers)
+        self.f_logsig = CausalStack2(channels, kernel, n_layers)
+
+    # learned scalars
+    def a(self): return torch.sigmoid(self.raw_a)
+    def b(self): return torch.sigmoid(self.raw_b)
+
+    # ------------------------------------------------------------------ #
+    # forward keeps shapes (B,1,L) — *no* squeeze                         #
+    # ------------------------------------------------------------------ #
+    def forward(self, x_t, y):
+        """
+        x_t : (B,1,L)  noisy input at step t
+        y   : (B,1,L)  clean / target waveform
+        """
+        a, b = self.a(), self.b()          # scalars
+
+        diff = y - a * x_t
+        diff_shift = F.pad(diff, (1, 0))[:, :, :-1]       # causal shift
+
+        mu_adj    = self.f_mu(diff_shift)
+        log_sigma = self.f_logsig(diff_shift)
+
+        mu = b * x_t + mu_adj
+        return mu, log_sigma
+
+    # unchanged negative-log-likelihood helpers -------------------------
+    def calc_model_likelihood(self, mu, log_sigma, y):
+        inv_var = torch.exp(-2 * log_sigma)
+        nll = -(log_sigma + 0.5 * math.log(2 * math.pi)
+                + 0.5 * inv_var * (y - mu) ** 2).sum()
+        return nll
+
+    def casual_loss(self, mu, log_sigma, y):
+        return -self.calc_model_likelihood(mu, log_sigma, y)
+
+
+
+
+class GaussianARStepModel2b(nn.Module):
+    """
+    μ_i = b · x_i + f_μ( y_{i−1} − a x_{i−1}, … )
+    σ_i = exp( f_logσ( … ) )
+    """
+    def __init__(self, channels=32, kernel=23, n_layers=4):
+        super().__init__()
+        self.raw_a = nn.Parameter(torch.tensor(10.0))  # sigmoid ≈ 1.0 # sigmoid → (0,1)
+        self.raw_b = nn.Parameter(torch.tensor(-4.595))  # sigmoid ≈ 0.01  # sigmoid → (0,1)
+
+        self.f_mu     = CausalStack2(channels, kernel, n_layers)
+        self.f_logsig = CausalStack2(channels, kernel, n_layers)
+
+    # learned scalars
+    def a(self): return torch.sigmoid(self.raw_a)
+    def b(self): return torch.sigmoid(self.raw_b)
+
+    # ------------------------------------------------------------------ #
+    # forward keeps shapes (B,1,L) — *no* squeeze                         #
+    # ------------------------------------------------------------------ #
+    def forward(self, x_t, y):
+        """
+        x_t : (B,1,L)  noisy input at step t
+        y   : (B,1,L)  clean / target waveform
+        """
+        a, b = self.a(), self.b()          # scalars
+
+        diff = y - a * x_t
+        diff_shift = F.pad(diff, (1, 0))[:, :, :-1]       # causal shift
+
+        mu_adj    = self.f_mu(diff_shift)
+        log_sigma = self.f_logsig(diff_shift)
+
+        mu = b * x_t + mu_adj
+        return mu, log_sigma
+
+    # unchanged negative-log-likelihood helpers -------------------------
+    def calc_model_likelihood(self, mu, log_sigma, y):
+        inv_var = torch.exp(-2 * log_sigma)
+        nll = -(log_sigma + 0.5 * math.log(2 * math.pi)
+                + 0.5 * inv_var * (y - mu) ** 2).sum()
+        return nll
+
+    def casual_loss(self, mu, log_sigma, y):
+        return -self.calc_model_likelihood(mu, log_sigma, y)
+
+
+
+class GaussianARStepModel3(nn.Module):
+    """
+    μ_i = 1·x_i + f_μ( y_{i−1} − 1·x_{i−1}, … )
+    σ_i = exp( f_logσ( … ) )
+    """
+    def __init__(self, channels=64, kernel=3, n_layers=4):
+        super().__init__()
+        # Non-learnable constants
+        self.register_buffer('a_const', torch.tensor(1.0))
+        self.register_buffer('b_const', torch.tensor(1.0))
+
+        self.f_mu     = CausalStack2(channels, kernel, n_layers)
+        self.f_logsig = CausalStack2(channels, kernel, n_layers)
+
+    # convenient accessors
+    def a(self): return self.a_const
+    def b(self): return self.b_const
+
+    # ------------------------------------------------------------------
+    def forward(self, x_t, y):
+        """
+        x_t : (B,1,L)  noisy input at step t
+        y   : (B,1,L)  clean / target waveform
+        """
+        diff = y - self.a() * x_t
+        diff_shift = F.pad(diff, (1, 0))[:, :, :-1]
+
+        mu_adj    = self.f_mu(diff_shift)
+        log_sigma = self.f_logsig(diff_shift)
+
+        mu = self.b() * x_t + mu_adj
+        return mu, log_sigma
+
+    # unchanged helpers -------------------------------------------------
+    def calc_model_likelihood(self, mu, log_sigma, y):
+        inv_var = torch.exp(-2 * log_sigma)
+        nll = -(log_sigma + 0.5 * math.log(2 * math.pi)
+                + 0.5 * inv_var * (y - mu) ** 2).sum()
+        return nll
+
+    def casual_loss(self, mu, log_sigma, y):
+        return -self.calc_model_likelihood(mu, log_sigma, y)
+    
+    
+    
+class GaussianARStepModel4(nn.Module):
+    """
+    μ_i = 1·x_i + f_μ( y_{i−1} − 1·x_{i−1}, … )
+    σ_i = exp( f_logσ( … ) )
+    """
+    def __init__(self, channels=8, kernel=30, n_layers=16):
+        super().__init__()
+        # Non-learnable constants
+        self.register_buffer('a_const', torch.tensor(1.0))
+        self.register_buffer('b_const', torch.tensor(1.0))
+
+        self.f_mu     = CausalStack2(channels, kernel, n_layers)
+        self.f_logsig = CausalStack2(channels, kernel, n_layers)
+
+    # convenient accessors
+    def a(self): return self.a_const
+    def b(self): return self.b_const
+
+    # ------------------------------------------------------------------
+    def forward(self, x_t, y):
+        """
+        x_t : (B,1,L)  noisy input at step t
+        y   : (B,1,L)  clean / target waveform
+        """
+        diff = y - self.a() * x_t
+        diff_shift = F.pad(diff, (1, 0))[:, :, :-1]
+
+        mu_adj    = self.f_mu(diff_shift)
+        log_sigma = self.f_logsig(diff_shift)
+
+        mu = self.b() * x_t + mu_adj
+        return mu, log_sigma
+
+    # unchanged helpers -------------------------------------------------
+    def calc_model_likelihood(self, mu, log_sigma, y):
+        inv_var = torch.exp(-2 * log_sigma)
+        nll = -(log_sigma + 0.5 * math.log(2 * math.pi)
+                + 0.5 * inv_var * (y - mu) ** 2).sum()
+        return nll
+
+    def casual_loss(self, mu, log_sigma, y):
+        return -self.calc_model_likelihood(mu, log_sigma, y)
+    
+    
+class GaussianARStepModel5(nn.Module):
+    """
+    μ_i = 1·x_i + f_μ( y_{i−1} − 1·x_{i−1}, … )
+    σ_i = exp( f_logσ( … ) )
+    """
+    def __init__(self, channels=64, kernel=50, n_layers=16):
+        super().__init__()
+        # Non-learnable constants
+        self.register_buffer('a_const', torch.tensor(1.0))
+        self.register_buffer('b_const', torch.tensor(1.0))
+
+        self.f_mu     = CausalStack2(channels, kernel, n_layers)
+        self.f_logsig = CausalStack2(channels, kernel, n_layers)
+
+    # convenient accessors
+    def a(self): return self.a_const
+    def b(self): return self.b_const
+
+    # ------------------------------------------------------------------
+    def forward(self, x_t, y):
+        """
+        x_t : (B,1,L)  noisy input at step t
+        y   : (B,1,L)  clean / target waveform
+        """
+        diff = y - self.a() * x_t
+        diff_shift = F.pad(diff, (1, 0))[:, :, :-1]
+
+        mu_adj    = self.f_mu(diff_shift)
+        log_sigma = self.f_logsig(diff_shift)
+
+        mu = self.b() * x_t + mu_adj
+        return mu, log_sigma
+
+    # unchanged helpers -------------------------------------------------
+    def calc_model_likelihood(self, mu, log_sigma, y):
+        inv_var = torch.exp(-2 * log_sigma)
+        nll = -(log_sigma + 0.5 * math.log(2 * math.pi)
+                + 0.5 * inv_var * (y - mu) ** 2).sum()
+        return nll
+
+    def casual_loss(self, mu, log_sigma, y):
+        return -self.calc_model_likelihood(mu, log_sigma, y)
