@@ -53,7 +53,8 @@ def run_exp(exp_dir, dirnames, s_array=None,reset=False,s_schedule="60",schedule
                 shutil.rmtree(dir_path)
                 os.mkdir(outbasedir)
         for wav in tqdm(noiswavs):
-            snr = wav.split("snr")[1].split("_")[0]
+            # snr = wav.split("snr")[1].split("_")[0]
+            snr = wav.rsplit("snr", 1)[1].split("_")[0]
             noise_type = str(Path(wav).name).split("noise")[1].split("_")[0]
             if noise_mosel_path == "0":
                 noise_model_path = Path(root) / f"0_snr{snr}_{noise_type}_models.pickle"

@@ -697,6 +697,42 @@ class GaussianDiffusion:
                     except:
                         loss = y_model.casual_loss(mu, log_sigma, y_noisy).to("cuda")
                     grad_log_p = -c3 * torch.autograd.grad(loss, mu_theta)[0]
+            elif noise_type == "y_model_norm":
+                with torch.enable_grad():
+                    y_model  = noise_model.to("cuda")     # GaussianARStepModel2 already trained on z-scores
+
+                    # ------------------------------------------------------------------
+                    # 1.  per-clip statistics  (same for every tensor in this clip)
+                    # ------------------------------------------------------------------
+                    mu_c  = y_noisy.mean(dim=(-1, -2), keepdim=True)               # [B,1,1]
+                    std_c = y_noisy.std (dim=(-1, -2), keepdim=True).clamp_min(1e-8)
+
+                    # ------------------------------------------------------------------
+                    # 2.  normalise inputs                                            z = (x-μ)/σ
+                    # ------------------------------------------------------------------
+                    mu_theta_z = ((cur_mean.detach().to("cuda") - mu_c) / std_c).requires_grad_(True)
+                    y_noisy_z  =  (y_noisy.to("cuda")             - mu_c) / std_c
+
+                    # ------------------------------------------------------------------
+                    # 3.  forward & loss computed **in z-space**
+                    # ------------------------------------------------------------------
+                    mu_z, log_sigma_z = y_model(mu_theta_z, y_noisy_z)
+
+                    # (offset flag as in your original try/except – keep whichever path you need)
+                    try:
+                        loss = y_model.casual_loss(mu_z, log_sigma_z, y_noisy_z, offset=False).to("cuda")
+                    except:
+                        loss = y_model.casual_loss(mu_z, log_sigma_z, y_noisy_z).to("cuda")
+
+                    # ------------------------------------------------------------------
+                    # 4.  gradient back to **original units**
+                    #     dL/dθ = (dL/dθ_z) · (∂θ_z / ∂θ)   with  θ_z = (θ - μ_c) / σ_c
+                    #                             ∂θ_z/∂θ = 1/σ_c
+                    # ------------------------------------------------------------------
+                    grad_mu_z  = torch.autograd.grad(loss, mu_theta_z)[0]
+                    grad_log_p = -c3 * (grad_mu_z / std_c)          # scale back
+
+                # grad_log_p now has the same shape & units as the original `cur_mean`
             elif noise_type == "loss_model":
                 # print("--------loss_model----------")
                 with torch.enable_grad():
@@ -1188,7 +1224,7 @@ class GaussianDiffusion:
                 else: return super().find_class(module, name)
         
         if noise_model_path is not None and network is None:
-            if noise_type=="loss_model" or noise_type=="y_model" or noise_type=="loss_model_x" or noise_type=="loss_model_mog" or noise_type=="freq_nn" or noise_type=="loss_model_sig10":
+            if noise_type=="loss_model" or noise_type=="y_model" or noise_type=="y_model_norm" or noise_type=="loss_model_x" or noise_type=="loss_model_mog" or noise_type=="freq_nn" or noise_type=="loss_model_sig10":
                 with open(noise_model_path, 'rb') as handle:
                     params_dict =  CPU_Unpickler(handle).load()
                     print("noise_model_path: ", noise_model_path)
@@ -1245,7 +1281,7 @@ class GaussianDiffusion:
                     noise_model = noise_models[i]
             elif  (noise_model_path is not None and network is None) and noise_type!="loss_model_double":
                 noise_model = noise_models[i]
-                if noise_type=="loss_model" or noise_type=="y_model" or noise_type=="loss_model_x" or  noise_type=="loss_model_mog" or noise_type=="loss_model_sig10":
+                if noise_type=="loss_model" or noise_type=="y_model" or noise_type=="y_model_norm" or noise_type=="loss_model_x" or  noise_type=="loss_model_mog" or noise_type=="loss_model_sig10":
                     noise_model = noise_model.to(device)
             else:
                 noise_models_low,noise_models_high = noise_models
