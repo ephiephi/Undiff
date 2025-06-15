@@ -11,6 +11,42 @@ from pathlib import Path
 import shutil
 from glob import glob
 
+def choose_closest_to_median(excel_path):
+    """
+    Read an Excel file, extract numeric values from the 'name' column,
+    compute the median, and find the value closest to the median.
+    If there's a tie, choose the one that occurs most frequently.
+    """
+    # Read the Excel file into a DataFrame
+    df = pd.read_excel(excel_path)
+
+    # Extract the numeric part from the 'name' column (assumes names like "s0.11" or "s.013")
+    df['num'] = df['name'].str.extract(r's([\d\.]+)').astype(float)
+
+    # Calculate the median of the extracted numbers
+    median_val = df['num'].median()
+
+    # Find all unique values present
+    unique_vals = df['num'].unique()
+
+    # Compute absolute distance from each unique value to the median
+    distances = abs(unique_vals - median_val)
+
+    # Identify the minimum distance
+    min_dist = distances.min()
+
+    # Candidates are unique values that are closest to the median
+    candidates = unique_vals[distances == min_dist]
+
+    # If there are multiple candidates, choose the one occurring most frequently
+    if len(candidates) > 1:
+        counts = df['num'].value_counts()
+        chosen = max(candidates, key=lambda x: counts.loc[x])
+    else:
+        chosen = candidates[0]
+
+    return chosen
+
 
 
 def get_df(exp_root, dir):
@@ -53,7 +89,7 @@ def drop_rows_without_comparison(df, ours_df):
         if len(mine_parallel)==0:
             idx = df[(df.dir==dir_)&(df.noise_type==noisetype)].index
             df = df.drop(idx)
-        return df
+    return df  #changed
 
 
 def get_stats_df(df, alg_name, dir_=None, noise_type=None, snr_=None):
@@ -68,7 +104,7 @@ def get_stats_df(df, alg_name, dir_=None, noise_type=None, snr_=None):
     return dfstats
 
 
-def create_mine_df(exp_root,df_noisy,mine,noises,cols,names,snrs):
+def create_mine_df(exp_root,df_noisy,mine,noises,cols,names,snrs,specific_s):
     for d in names: 
         dfme = get_df(exp_root,d)
         if dfme is None:
@@ -89,6 +125,8 @@ def create_mine_df(exp_root,df_noisy,mine,noises,cols,names,snrs):
                 c_snr=str(c_snr)
                 dfme_cur = dfme[dfme["snr"]==c_snr]
                 cur_mine = dfme_cur[dfme_cur["noise_type"]==noisetype]
+                if specific_s is not None:
+                    cur_mine = cur_mine[cur_mine["name"] == f"s{str(specific_s)}"].reset_index(drop=True)[cols]
                 cur_mine = cur_mine[cur_mine["pesq"] ==cur_mine["pesq"].max()].reset_index(drop=True)[cols]
                 if mine is None:
                     mine = cur_mine
@@ -132,18 +170,46 @@ def calc_vad(f, verbose=False):
     return deframe(vad,win_len,hop_len) 
 
 
-def analyze_exp(exp_root,noises_names,snrs,names):
+def analyze_exp(exp_root,noises_names,snrs,names,specific_s=None,output_namedir=None):
     
     storm_enhanced_path = str( Path(exp_root)/"storm/enhanced/")
     storm_clean_wav = str(Path(exp_root)/"storm"/"clean_wav")
     NOISES = noises_names
 
     cols =["dir","name","stoi","input_stoi","pesq","input_pesq","OVRL","SIG","BAK","si_sdr",'sdr', "sar",'sir',"noise_type", "filename","snr"]
+    cols =["dir","name","stoi","input_stoi","pesq","input_pesq","OVRL","SIG","BAK","si_sdr",'sdr', "sar",'sir',"noise_type", "filename","snr"]
+
     mine = None
     df_noisy = None
-    mine, df_noisy = create_mine_df(exp_root,df_noisy,mine,noises=NOISES,cols=cols,names=names,snrs=snrs)
+    mine, df_noisy = create_mine_df(exp_root,df_noisy,mine,noises=NOISES,cols=cols,names=names,snrs=snrs,specific_s=specific_s)
     
-    analysis_root = os.path.join(exp_root, "analysis")
+    
+    mine["snr"]     = mine["snr"].astype(str)
+    df_noisy["snr"] = df_noisy["snr"].astype(str) 
+     # right after mine, df_noisy are final 
+    df_noisy_unique = df_noisy.drop_duplicates(subset=["dir","noise_type","snr"])
+    mine = mine.merge(
+        df_noisy_unique[["dir","noise_type","snr",
+                         "input_pesq","input_stoi"]],
+        on=["dir","noise_type","snr"],
+        how="left",
+        validate="m:1",
+        suffixes=("", "_from_noisy")  )   
+    # mine = mine.merge( df_noisy[["dir","noise_type","snr","input_pesq","input_stoi"]], on=["dir","noise_type","snr"], suffixes=("","_from_noisy") ) 
+    mine["input_pesq"] = mine["input_pesq_from_noisy"] 
+    mine["input_stoi"] = mine["input_stoi_from_noisy"] 
+    mine.drop(columns=["input_pesq_from_noisy","input_stoi_from_noisy"], inplace=True)
+    
+    
+
+    
+    
+    
+    
+    if not output_namedir:
+        analysis_root = os.path.join(exp_root, "analysis")
+    else:
+        analysis_root = os.path.join(exp_root, output_namedir)
     if not os.path.exists(analysis_root):
         os.mkdir(analysis_root)
     
@@ -164,7 +230,10 @@ def analyze_exp(exp_root,noises_names,snrs,names):
     minestats = get_stats_df(mine, "ours")
     df_storm_stats = get_stats_df(df_storm, STORM)
     df_sg_stats = get_stats_df(df_sg, SGMSE)
-    statsdf = pd.concat([minestats,df_sg_stats,df_storm_stats])
+    
+    all_stats_cols = ["stoi","input_stoi","pesq","input_pesq","OVRL","SIG","BAK","si_sdr","alg"]
+
+    statsdf = pd.concat([minestats,df_sg_stats,df_storm_stats])[all_stats_cols]
     statsdf_path = os.path.join(analysis_root,"all_stats.xlsx")
     statsdf.to_excel(statsdf_path)
     

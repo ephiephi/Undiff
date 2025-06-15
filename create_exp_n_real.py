@@ -62,7 +62,7 @@ import os
 import pandas as pd
 from torch.utils.data import Dataset
 
-from analyze.analyze_exp import analyze_exp
+from analyze.analyze_exp import analyze_exp, choose_closest_to_median
 from run_storm import run_storm
 from create_exp_m import NetworkNoise2, NetworkNoise3,NetworkNoise4, train_nets_parralel, get_named_beta_schedule
 
@@ -163,7 +163,10 @@ def process_wav_file(wav_path, start_seconds, end_seconds, sample_rate=16000):
     if sr != sample_rate:
         audio = F.resample(audio, sr, sample_rate)
     start_sample = int(start_seconds * sample_rate)
-    end_sample = int(end_seconds * sample_rate)
+    if end_seconds == None:
+        end_sample = audio.shape[1]
+    else:
+        end_sample = int(end_seconds * sample_rate)
     return audio, sample_rate, start_sample, end_sample
 
 
@@ -630,7 +633,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="measure guided")
     parser.add_argument(
         "-config",
-        default="exps_configs/o3x_net3_6.yaml",
+        default="exps_configs/librAR_net3_6_snrs.yaml",
     )
     args = parser.parse_args()
 
@@ -701,5 +704,5 @@ if __name__ == '__main__':
     run_storm(exp_root,storm_root) #200 steps
     
     logging.info("---analyzing---")
-    analyze_exp(exp_root,noises_names,snr_array,names)
+    analyze_exp(exp_root,noises_names,snr_array,names,specific_s=None)
 
