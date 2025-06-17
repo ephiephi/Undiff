@@ -60,7 +60,7 @@ import os
 import pandas as pd
 from torch.utils.data import Dataset
 
-from analyze.analyze_exp import analyze_exp
+from analyze.analyze_exp import analyze_exp, choose_closest_to_median
 from run_storm import run_storm
 from create_exp_m import NetworkNoise2, NetworkNoise3,NetworkNoise4, get_named_beta_schedule,get_group_indices, plot_loss, get_group_indices
 from torch.optim.lr_scheduler import StepLR
@@ -906,7 +906,7 @@ def organize_wav_files_snr_levels(exp_root, output_pickle, snr_levels, num_train
         noise_start = noise_end-(clean_end-clean_start)
         
         # Process training noise
-        train_noise_audio, _, train_start, train_end = process_wav_file(noises_dir / noise_file, 0, num_train_seconds_noise)
+        train_noise_audio, n_sr, train_start, train_end = process_wav_file(noises_dir / noise_file, 0, num_train_seconds_noise)
         # train_clean_audio, _, train_clean_start, train_clean_end = process_wav_file(clean_dir / clean_file, 0, num_train_seconds)
         
         sr=16000
@@ -949,47 +949,127 @@ def organize_wav_files_snr_levels(exp_root, output_pickle, snr_levels, num_train
             target_clean_train_save_dir.mkdir(parents=True, exist_ok=True)
             clean_train_idx_dir =  clean_train_dir/("fileid_" + file_id   )
             offset = 0
+            
+            total_noise_len = scaled_noise_audio_train.shape[1]
+            
+            # ------------------------------------------------------------------
+            # slice training clips — guarantees equal length by trimming only
+            # ------------------------------------------------------------------
+            noise_root_dir    = Path(exp_root) / "noise_train"
+            use_parallel_noise  = noise_root_dir.exists()
+            offset = 0
+            total_noise_len = scaled_noise_audio_train.shape[1]
+
             for clean_train_path in clean_train_idx_dir.glob("*.wav"):
-                # print(0)
+                # ---- load clean wav, force mono ----
+                clean_waveform, sr, _, _ = process_wav_file(clean_train_path, 0, None)
+                if clean_waveform.dim() == 1:           # [L] → [1, L]
+                    clean_waveform = clean_waveform.unsqueeze(0)
+
+                # ---- (optional) scale clean for loudness alignment ----
+                if adapt_train_scale:
+                    peak      = clean_waveform.abs().max().item()
+                    ref_peak  = clean_audio[:, clean_start:clean_end].abs().max().item()
+                    scaling_factor = ref_peak / (peak + 1e-9)
+                else:
+                    scaling_factor = 1.0
+                clean_waveform *= scaling_factor
+
+                # ---------------- I/O paths ----------------
                 noise_train_save_path = target_train_noise_dir / clean_train_path.name
                 noisy_train_save_path = target_train_noisy_dir / clean_train_path.name
-                clean_train_save_path = target_clean_train_save_dir/ clean_train_path.name
-                # Skip if this file was already processed
-                # if noise_train_save_path.exists():
-                #     continue
+                clean_train_save_path = target_clean_train_save_dir / clean_train_path.name
 
-                # Load the clean waveform and sampling rate
-                clean_waveform, sr,_,_= process_wav_file(clean_train_path, 0, None)
-
-                # Scale the clean waveform if a scaling factor is provided
-                if adapt_train_scale:
-                    # scaling_factor = calculate_scaling_factor(clean_audio[:, clean_start:clean_end], clean_waveform, 0)
-                    peak = clean_waveform.abs().max().item()
-                    ref_peak = clean_audio[:, clean_start:clean_end].abs().max().item()
-                    scaling_factor = ref_peak / peak 
-                else:
-                    scaling_factor = torch.tensor(1.0)
-                clean_waveform = clean_waveform * scaling_factor
+                # save the (possibly rescaled) clean training chunk
                 torchaudio.save(clean_train_save_path, clean_waveform, sr, encoding="PCM_F")
+                
+                if use_parallel_noise:
+                    # expected parallel noise location:  noise_train/fileid_<file_id>/<same filename>.wav
+                    parallel_dir = noise_root_dir / f"fileid_{file_id}"
+                    parallel_file = parallel_dir / clean_train_path.name
+                    if parallel_file.exists():
+                        noise_segment, _, _, _ = process_wav_file(parallel_file, 0, None)
+                        if noise_segment.dim() == 1:
+                            noise_segment = noise_segment.unsqueeze(0)
+                        # Trim both tensors to the shorter length
+                        L = min(clean_waveform.size(1), noise_segment.size(1))
+                        clean_waveform = clean_waveform[:, :L]
+                        noise_segment  = noise_segment[:,  :L]
+                    else:
+                        logging.warning(f"Missing parallel noise: {parallel_file}. Falling back to wrap-around.")
+                        noise_segment = None   # triggers fallback
+                
+                if not use_parallel_noise:
+                    # ---- pull a noise slice of ≥ desired length, wrap if needed ----
+                    Lc = clean_waveform.shape[1]                      # target length
+                    if Lc <= total_noise_len - offset:
+                        noise_segment = scaled_noise_audio_train[:, offset:offset + Lc]
+                    else:
+                        part1     = scaled_noise_audio_train[:, offset:]
+                        remain    = Lc - part1.shape[1]
+                        part2     = scaled_noise_audio_train[:, :remain]
+                        noise_segment = torch.cat([part1, part2], dim=1)
+                    offset = (offset + Lc) % total_noise_len          # advance pointer
 
-                # Select a noise segment of the same length as the clean waveform (wrap around if needed)
-                length = clean_waveform.shape[1]
-                total_noise_len = scaled_noise_audio_train.shape[1]
-                if length <= total_noise_len - offset:
-                    noise_segment = scaled_noise_audio_train[:, offset:offset + length]
-                else:
-                    part1 = scaled_noise_audio_train[:, offset:]
-                    remaining = length - (total_noise_len - offset)
-                    part2 = scaled_noise_audio_train[:, :remaining]
-                    noise_segment = torch.cat((part1, part2), dim=1)
-                offset = (offset + length) % total_noise_len
+                # ---- FINAL safety-trim so both tensors are exactly equal ----
+                L = min(clean_waveform.shape[1], noise_segment.shape[1])
+                clean_waveform = clean_waveform[:, :L]
+                noise_segment  = noise_segment[:,  :L]
 
-                scaling_factor = calculate_scaling_factor( clean_waveform, noise_segment, snr)
-                noise_segment = noise_segment * scaling_factor
-                # Save the noise segment and the combined noisy waveform
-                torchaudio.save(noise_train_save_path, noise_segment, sample_rate=sr, encoding='PCM_F')
+                # ---- scale noise to requested SNR ----
+                scaling_factor = calculate_scaling_factor(clean_waveform, noise_segment, snr)
+                noise_segment *= scaling_factor
+
+                # ---- save noise & noisy mixture ----
+                torchaudio.save(noise_train_save_path, noise_segment, sr, encoding="PCM_F")
                 noisy_waveform = clean_waveform + noise_segment
-                torchaudio.save(noisy_train_save_path, noisy_waveform, sample_rate=sr, encoding='PCM_F')
+                torchaudio.save(noisy_train_save_path, noisy_waveform, sr, encoding="PCM_F")
+
+            # for clean_train_path in clean_train_idx_dir.glob("*.wav"):
+            #     clean_waveform, sr, _, _ = process_wav_file(clean_train_path, 0, None)
+            #     if clean_waveform.dim() == 1:           # ensure [1, L]
+            #         clean_waveform = clean_waveform.unsqueeze(0)
+
+            #     # print(0)
+            #     noise_train_save_path = target_train_noise_dir / clean_train_path.name
+            #     noisy_train_save_path = target_train_noisy_dir / clean_train_path.name
+            #     clean_train_save_path = target_clean_train_save_dir/ clean_train_path.name
+            #     # Skip if this file was already processed
+            #     # if noise_train_save_path.exists():
+            #     #     continue
+
+            #     # Load the clean waveform and sampling rate
+            #     # clean_waveform, sr,_,_= process_wav_file(clean_train_path, 0, None)
+
+            #     # Scale the clean waveform if a scaling factor is provided
+            #     if adapt_train_scale:
+            #         # scaling_factor = calculate_scaling_factor(clean_audio[:, clean_start:clean_end], clean_waveform, 0)
+            #         peak = clean_waveform.abs().max().item()
+            #         ref_peak = clean_audio[:, clean_start:clean_end].abs().max().item()
+            #         scaling_factor = ref_peak / peak 
+            #     else:
+            #         scaling_factor = torch.tensor(1.0)
+            #     clean_waveform = clean_waveform * scaling_factor
+            #     torchaudio.save(clean_train_save_path, clean_waveform, sr, encoding="PCM_F")
+
+            #     # Select a noise segment of the same length as the clean waveform (wrap around if needed)
+            #     length = clean_waveform.shape[1]
+            #     total_noise_len = scaled_noise_audio_train.shape[1]
+            #     if length <= total_noise_len - offset:
+            #         noise_segment = scaled_noise_audio_train[:, offset:offset + length]
+            #     else:
+            #         part1 = scaled_noise_audio_train[:, offset:]
+            #         remaining = length - (total_noise_len - offset)
+            #         part2 = scaled_noise_audio_train[:, :remaining]
+            #         noise_segment = torch.cat((part1, part2), dim=1)
+            #     offset = (offset + length) % total_noise_len
+
+            #     scaling_factor = calculate_scaling_factor( clean_waveform, noise_segment, snr)
+            #     noise_segment = noise_segment * scaling_factor
+            #     # Save the noise segment and the combined noisy waveform
+            #     torchaudio.save(noise_train_save_path, noise_segment, sample_rate=sr, encoding='PCM_F')
+            #     noisy_waveform = clean_waveform + noise_segment
+            #     torchaudio.save(noisy_train_save_path, noisy_waveform, sample_rate=sr, encoding='PCM_F')
                                                         
             # Add metadata
             df_idx += 1 
@@ -1017,7 +1097,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="measure guided")
     parser.add_argument(
         "-config",
-        default="exps_configs/libReal_p_net3_snrm5.yaml",
+        default="exps_configs/librDemandSttnr_p_net3_snrm5.yaml",
     )
     args = parser.parse_args()
 
@@ -1095,27 +1175,32 @@ if __name__ == '__main__':
         #     print(f"Skipped (already exists): {new_path}")
 
     
-    save_audio = False
+    save_audio = True
     if len(snr_array)==0:
         names, noises_names,snr_array = organize_wav_files(exp_root, output_pickle_path, num_train_seconds=test_start_sec, num_test_seconds=test_end_sec, save_audio=save_audio)
     else:
         names, noises_names,snr_array = organize_wav_files_snr_levels(exp_root, output_pickle_path, snr_array, num_train_seconds=test_start_sec, num_test_seconds=test_end_sec,  num_train_seconds_noise=test_start_sec_noise, num_test_seconds_noise=test_end_sec_noise,train_on_test=train_on_test,adapt_train_scale=adapt_train_scale)
     
     run_network=None 
-    # if trained_model_path == "0":
-    #     logging.info("---startin training---")
-    #     train_noisemodel(exp_root, network=network,epochs=epochs, dataset_size=dataset_size, n_samples=n_samples,batch_size=batch_size,g_t=g_t,num_nets=num_steps,min_epochs=min_epochs,slope_epochs=slope_epochs,noisy_val_len=noisy_val_len,mog=mog,lr=lr,one_network=one_network,scheduler=training_scheduler,normalize_dataset=normalize_dataset)
-    # else:
-    #     run_network=  network
+    if trained_model_path == "0":
+        logging.info("---startin training---")
+        train_noisemodel(exp_root, network=network,epochs=epochs, dataset_size=dataset_size, n_samples=n_samples,batch_size=batch_size,g_t=g_t,num_nets=num_steps,min_epochs=min_epochs,slope_epochs=slope_epochs,noisy_val_len=noisy_val_len,mog=mog,lr=lr,one_network=one_network,scheduler=training_scheduler,normalize_dataset=normalize_dataset)
+    else:
+        run_network=  network
     # names=["6","18"]
     # noises_names = ["6","18"]
     
-    # logging.info("---run_exp---")
+    logging.info("---run_exp---")
     run_exp(exp_root, dirnames=names,s_array=s_array, reset=False, s_schedule=scheduler, scheduler_type=scheduler_type,noise_mosel_path=trained_model_path, network=run_network,mog=mog,loss_model=loss_model)
     
     storm_root = str(Path(exp_root)/"storm")
-    # run_storm(exp_root,storm_root) #200 steps
+    run_storm(exp_root,storm_root) #200 steps
     
     logging.info("---analyzing---")
-    analyze_exp(exp_root,noises_names,snr_array,names)
+    analyze_exp(exp_root,noises_names,snr_array,names,specific_s=None)
+    
+    ours_results_path = Path(exp_root)/"analysis"/"ours_all.xlsx"
+    winner_s = choose_closest_to_median(ours_results_path)
+    analyze_exp(exp_root,noises_names,snr_array,names,specific_s=winner_s,output_namedir="analysis_specific_s",)
+
 

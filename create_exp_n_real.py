@@ -704,5 +704,12 @@ if __name__ == '__main__':
     run_storm(exp_root,storm_root) #200 steps
     
     logging.info("---analyzing---")
+    # analyze_exp(exp_root,noises_names,snr_array,names,specific_s=None)
+    
     analyze_exp(exp_root,noises_names,snr_array,names,specific_s=None)
+    
+    ours_results_path = Path(exp_root)/"analysis"/"ours_all.xlsx"
+    winner_s = choose_closest_to_median(ours_results_path)
+    analyze_exp(exp_root,noises_names,snr_array,names,specific_s=winner_s,output_namedir="analysis_specific_s",)
+
 
