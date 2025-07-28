@@ -78,7 +78,8 @@ def calc_measures(exp_dir,enhanced_dir,clean_dir,noisy_dir,snr_dirs):
                     metrics["name"] = Path(path_).name
                     metrics["s"] = float(str(Path(path_).name).split("s")[1])
                     metrics["filename"] = (ours)
-                    metrics["snr"] = ours.split("snr")[1].split("/")[0]
+                    # metrics["snr"] = ours.split("snr")[1].split("/")[0]
+                    metrics["snr"] = ours.rsplit("snr", 1)[1].split("_", 1)[0]
                     if "noise" in Path(ours).name:
                         metrics["noise_type"] = str(Path(ours).name).split("noise")[1].split("_")[0]
                     # Print metrics
@@ -102,7 +103,8 @@ def calc_measures(exp_dir,enhanced_dir,clean_dir,noisy_dir,snr_dirs):
             metrics["name"] = "noisy"
             metrics["s"] = None
             metrics["filename"] = (cur_noisy_path)
-            metrics["snr"] = cur_noisy_path.split("_snr")[1].split("_")[0]
+            # metrics["snr"] = cur_noisy_path.split("_snr")[1].split("_")[0]
+            metrics["snr"]  = cur_noisy_path.rsplit("snr", 1)[1].split("_", 1)[0]
             if "noise" in Path(cur_noisy_path).name:
                 metrics["noise_type"] = str(Path(cur_noisy_path).name).split("noise")[1].split("_")[0]
             # Print metrics

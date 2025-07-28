@@ -1097,7 +1097,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="measure guided")
     parser.add_argument(
         "-config",
-        default="exps_configs/librDemandSttnr_p_net3_snrm5.yaml",
+        default="exps_configs/libr20BBC_p_net2_6_snr5.yaml",
     )
     args = parser.parse_args()
 
@@ -1175,7 +1175,7 @@ if __name__ == '__main__':
         #     print(f"Skipped (already exists): {new_path}")
 
     
-    save_audio = True
+    save_audio = False
     if len(snr_array)==0:
         names, noises_names,snr_array = organize_wav_files(exp_root, output_pickle_path, num_train_seconds=test_start_sec, num_test_seconds=test_end_sec, save_audio=save_audio)
     else:
@@ -1195,6 +1195,9 @@ if __name__ == '__main__':
     
     storm_root = str(Path(exp_root)/"storm")
     run_storm(exp_root,storm_root) #200 steps
+    from run_storm_measure import measure_storm
+    storm_root = os.path.join(exp_root, "storm")
+    measure_storm(storm_root)
     
     logging.info("---analyzing---")
     analyze_exp(exp_root,noises_names,snr_array,names,specific_s=None)

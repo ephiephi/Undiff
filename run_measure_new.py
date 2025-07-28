@@ -9,10 +9,11 @@ from measure_new import main_measure
 def main(root_dir,clean_dir, noisy_dir ):
     """not write metrics for None files"""
     for d in glob(root_dir+"*/"):
-        if Path(d).name not in ["noises", "clean_wav", "noisy_wav", "analysis", "storm", "cleans"]:
+        if Path(d).name not in ["analysis_specific_s","noise_train","5f_snrs.pickle","noises", "noisy_train","clean_train","clean_wav", "noisy_wav", "analysis", "storm", "cleans"," clean_train", "original_noises","original_clean_wav","original_clean_train","noise_mapping.csv"]:
             # command = "python measure_new.py -exp_dir={}".format(d)
             # print(command)
             # os.system(command)
+            print("measuring: ", d)
             main_measure(d)
             
         

@@ -55,6 +55,9 @@ def get_df(exp_root, dir):
 
     with open(pkl_results_file, "rb") as handle:
         dfme = pd.read_pickle(handle)
+    # for i in range(len(dfme["snr"])): #noisy hack
+    #     if "/" in dfme["snr"][i]:
+    #         dfme.at[i, "snr"] = dfme["snr"][i].split("/")[0] 
     return dfme
 
 
@@ -110,6 +113,7 @@ def create_mine_df(exp_root,df_noisy,mine,noises,cols,names,snrs,specific_s):
         if dfme is None:
             continue
         dfme = dfme.assign(dir=d)
+        
         cur_df_noisy = dfme[dfme["name"]=="noisy"].reset_index(drop=True)
         cur_df_noisy.loc[0,"dir"] = d
         if df_noisy is None:
@@ -118,7 +122,8 @@ def create_mine_df(exp_root,df_noisy,mine,noises,cols,names,snrs,specific_s):
             df_noisy = pd.concat([df_noisy, cur_df_noisy])
         dfme = dfme[dfme["name"] != "noisy"]
         
-        dfme = dfme[dfme["stoi"]>0.5]
+        # q01 = dfme["stoi"].quantile(0.2)  
+        # dfme = dfme[dfme["stoi"]>=q01]
 
         for noisetype in noises :
             for c_snr in snrs:
@@ -133,6 +138,10 @@ def create_mine_df(exp_root,df_noisy,mine,noises,cols,names,snrs,specific_s):
                 else:
                     mine = pd.concat([mine, cur_mine])
     mine=mine.reset_index(drop=True)
+    df_noisy.reset_index(drop=True, inplace=True)
+    for i in range(len(df_noisy["snr"])):
+        if "/" in df_noisy["snr"][i]:
+            df_noisy.at[i, "snr"] = df_noisy["snr"][i].split("/")[0]
     return mine, df_noisy
 
 def copy_wavs(df,wavdst,algname):
@@ -141,6 +150,8 @@ def copy_wavs(df,wavdst,algname):
         wavpath = df["filename"][i]
         dir_ = df["dir"][i]
         snr = df["snr"][i]
+        if "/" in snr:#for noisy df
+            snr = snr.split("/")[0]
         noisetype = df["noise_type"][i]
         name = f"{dir_}_{noisetype}_snr{snr}_{algname}.wav"
         dst = wavdst/f"{name}"
@@ -278,7 +289,8 @@ def analyze_exp(exp_root,noises_names,snrs,names,specific_s=None,output_namedir=
     for wavpath in wavs:
         c = Path(wavpath).name.split("_")[0]
         if "snr" in wavpath:
-            snr = wavpath.split("snr")[1].split("_")[0]
+            # snr = wavpath.split("snr")[1].split("_")[0]
+            snr = wavpath.rsplit("snr", 1)[1].split("_", 1)[0]
             noisetype = Path(wavpath).name.split("noise")[1].split("_")[0]
             name = f"{c}_{noisetype}_snr{snr}_clean.wav"
             dst = wavs_analysis_path/f"{name}"
@@ -313,19 +325,29 @@ if __name__ == '__main__':
     # snrs = ["5"]
     # names = ["j","b","c"]
     names = []
-    exp_root = "/data/ephraim/datasets/known_noise/undiff_exps/exp_n_real/"
-    for d in os.listdir(exp_root):
-        if not d in ['5f_snrs.pickle', 'storm', 'analysis','noises','noisy_wav','clean_wav',"cleans"]:
-            names.append(d)
-    NOISES = [str(i) for i in range(35) if i!=5]
-    names = NOISES
+    exp_root = "/data/ephraim/datasets/known_noise/undiff_exps3/exp_librBBC20_net3_6_SNR5/"
+    # for d in os.listdir(exp_root):
+    #     if not d in ['5f_snrs.pickle', 'storm', 'analysis','noises','noisy_wav','clean_wav',"cleans",]:
+    #         names.append(d)
+    print(names)
+    # NOISES = [str(i) for i in range(20) if os.path.exists(os.path.join(exp_root,"f{i}/enhanced_60"))]
+    
+    print(names)
     snrs = []
     for d in os.listdir(exp_root):
-        if not d in ['5f_snrs.pickle', 'storm', 'analysis','noises','noisy_wav','clean_wav']:
+        if not d in ['5f_snrs.pickle', 'storm', 'analysis','noises','noisy_wav','clean_wav',"original_clean_wav","original_clean_train","clean_train","original_noises"]:
+            if d.endswith(".csv"):
+                continue
             enh_dir = Path(exp_root)/d/"enhanced_60"
+            if os.path.exists(enh_dir):
+                names.append(d)
+            else:
+                continue
             snr_dir=os.listdir(enh_dir)
             for s in snr_dir:
                 c_snr = s.split("snr")[1]
                 if c_snr not in snrs:
                     snrs.append(c_snr)
+    NOISES = names
+    print(names)
     analyze_exp(exp_root,NOISES,snrs,names)

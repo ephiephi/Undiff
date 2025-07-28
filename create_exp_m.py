@@ -1,5 +1,7 @@
 import torchaudio
 import numpy as np
+import gc
+
 import scipy.signal as signal
 import scipy.io.wavfile as wavfile
 import matplotlib.pyplot as plt
@@ -527,18 +529,22 @@ def train_nets_process(network, train_full_tensors, test_full_tensors, device, i
         for epoch in range(cur_epochs):
             running_loss = 0.0
             for batch_idx, (batch_tensor, gt_tensor) in enumerate(train_loader):
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 batch_tensor = batch_tensor.to(device, dtype=torch.float)
                 gt_tensor = gt_tensor.to(device, dtype=torch.float)
                 
                 if mog==0:
                     means, stds = model(batch_tensor, gt_tensor)
+                    # means, stds = torch.utils.checkpoint.checkpoint_sequential( model.layers, segments=4, input=(batch_tensor,gt_tensor))
                     loss = model.casual_loss( means, stds, wav_tensor=batch_tensor).mean()
                 else:
                     logits, means, log_sig = model(batch_tensor, cur_gt=None)
                     loss = model.casual_loss(logits, means, log_sig, batch_tensor).mean()
                 loss.backward()
                 optimizer.step()
+                torch.cuda.empty_cache()
+                
+                # gc.collect()
                 running_loss += loss.item()
                 
             if epoch%1==0:
@@ -592,7 +598,7 @@ def train_nets_process(network, train_full_tensors, test_full_tensors, device, i
                 logging.info("plot_loss")
                 plot_loss(loss_array,loss_test_array,i, network,imgpath)
     logging.info(f"test_loss mins array:  {mins}")
-    
+    # gc.collect()
     return nets_min, loss_array, loss_test_array, quarter_idx
 
 
@@ -631,9 +637,10 @@ def get_group_indices(numbers, num_groups=4):
 
 def train_nets_parralel(network,train_dataset, test_dataset,trial=0, epochs=100,num_nets=200,batch_size=16,g_t=None,exp_root=None,min_epochs=400,slope_epochs=2,mog=0,lr=None,one_network=False,scheduler=None):
     results = []
-    gpu_num=4
+    gpu_num=torch.cuda.device_count()
     if one_network:
         gpu_num=1
+    # gpu_num = 1 #todo
     logging.info("parralel")
     logging.info(f"epochs,min_epochs,slope_epochs: ,{epochs},{min_epochs},{slope_epochs}")
     

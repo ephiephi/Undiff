@@ -47,28 +47,29 @@ ENHANCED_DIR_SGMSE_TIMIT="${ENHANCED_BASE_DIR}/sgmse_TIMITChime3"
 ENHANCED_DIR_STORM_TIMIT="${ENHANCED_BASE_DIR}/storm_TIMITChime3"
 
 # Run the commands using the dynamically passed enhanced_base_dir
-python /data/ephraim/repos/storm/enhancement.py \
+echo "RUNNING ENHANCEMENT SCRIPTS..."
+CUDA_VISIBLE_DEVICES=0 python /data/ephraim/repos/storm/enhancement.py \
   --test_dir "$TEST_DIR" \
   --enhanced_dir "$ENHANCED_DIR_SGMSE_WSJ0" \
   --ckpt "$CKPT_PATH_1" \
-  --mode "score-only" --N 200
+  --mode "score-only" --N 200 &
 
-python /data/ephraim/repos/storm/enhancement.py \
+CUDA_VISIBLE_DEVICES=1 python /data/ephraim/repos/storm/enhancement.py \
   --test_dir "$TEST_DIR" \
   --enhanced_dir "$ENHANCED_DIR_STORM_VBD" \
   --ckpt "$CKPT_PATH_2" \
-  --mode "storm" --N 200
+  --mode "storm" --N 200 &
 
-python /data/ephraim/repos/storm/enhancement.py \
+CUDA_VISIBLE_DEVICES=2 python /data/ephraim/repos/storm/enhancement.py \
   --test_dir "$TEST_DIR" \
   --enhanced_dir "$ENHANCED_DIR_SGMSE_TIMIT" \
   --ckpt "$CKPT_PATH_3" \
-  --mode "score-only" --N 200
+  --mode "score-only" --N 200 &
 
-python /data/ephraim/repos/storm/enhancement.py \
+CUDA_VISIBLE_DEVICES=3 python /data/ephraim/repos/storm/enhancement.py \
   --test_dir "$TEST_DIR" \
   --enhanced_dir "$ENHANCED_DIR_STORM_TIMIT" \
   --ckpt "$CKPT_PATH_4" \
-  --mode "storm" --N 200
+  --mode "storm" --N 200 
 
 

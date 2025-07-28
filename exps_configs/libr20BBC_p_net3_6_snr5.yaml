@@ -1,0 +1,27 @@
+# searching for s, many files:
+# s_array: [0.0005,0.001,0.005,0.008,0.01,0.03,0.07]
+# s_array: [0.01,0.001,0.005,0.0005]
+s_array: [0.035,0.04,0.045,0.08]
+exp_root: "/data/ephraim/datasets/known_noise/undiff_exps3/exp_libr20_p_net3_6_SNR5"
+network: "GaussianARStepModel3_6"
+epochs: 70
+min_epochs: 40
+slope_epochs: 8
+# epochs: 2
+# min_epochs: 2
+# slope_epochs: 2
+
+dataset_size: 1*1
+n_samples: 5
+batch_size: 1
+snr_array: ["5"]
+test_start_sec: 20
+test_end_sec: 25
+test_start_sec_noise: 20
+test_end_sec_noise: 25
+val_len: 1
+mog: 0
+lr: 0.02
+training_scheduler: "step"
+adapt_train_scale: true
+

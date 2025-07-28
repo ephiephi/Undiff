@@ -82,8 +82,8 @@ def run_exp(exp_dir, dirnames, s_array=None,reset=False,s_schedule="60",schedule
                     if not os.path.exists(newOUTPATH):
                         os.mkdir(newOUTPATH)
                     outwavpath = os.path.join(newOUTPATH, os.path.basename(wav))
-                    # if not os.path.exists(outwavpath):
-                    if True:
+                    if not os.path.exists(outwavpath):
+                    # if True:
                         run_network="null"
                         if network is not None:
                             run_network = network

@@ -633,7 +633,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="measure guided")
     parser.add_argument(
         "-config",
-        default="exps_configs/librAR_net3_6_snrs.yaml",
+        default="exps_configs/librBBC_net3_6_snr5.yaml",
     )
     args = parser.parse_args()
 
@@ -682,7 +682,7 @@ if __name__ == '__main__':
     output_pickle_path = Path(exp_root)/"5f_snrs.pickle"
 
     
-    save_audio = True
+    save_audio = False
     if len(snr_array)==0:
         names, noises_names,snr_array = organize_wav_files(exp_root, output_pickle_path, num_train_seconds=test_start_sec, num_test_seconds=test_end_sec, save_audio=save_audio)
     else:
@@ -694,17 +694,19 @@ if __name__ == '__main__':
         train_noisemodel(exp_root, network=network,epochs=epochs, dataset_size=dataset_size, n_samples=n_samples,batch_size=batch_size,g_t=g_t,num_nets=num_steps,min_epochs=min_epochs,slope_epochs=slope_epochs,test_len=test_len,mog=mog,lr=lr,one_network=one_network,scheduler=training_scheduler)
     else:
         run_network=  network
-    # names=["6","18"]
-    # noises_names = ["6","18"]
+    # # # names=["6","18"]
+    # # # noises_names = ["6","18"]
     
     logging.info("---run_exp---")
     run_exp(exp_root, dirnames=names,s_array=s_array, reset=False, s_schedule=scheduler, scheduler_type=scheduler_type,noise_mosel_path=trained_model_path, network=run_network,mog=mog,loss_model=loss_model,outdirname=s_scheduler)
     
     storm_root = str(Path(exp_root)/"storm")
     run_storm(exp_root,storm_root) #200 steps
+    from run_storm_measure import measure_storm
+    storm_root = os.path.join(exp_root, "storm")
+    measure_storm(storm_root)
     
     logging.info("---analyzing---")
-    # analyze_exp(exp_root,noises_names,snr_array,names,specific_s=None)
     
     analyze_exp(exp_root,noises_names,snr_array,names,specific_s=None)
     
@@ -712,4 +714,5 @@ if __name__ == '__main__':
     winner_s = choose_closest_to_median(ours_results_path)
     analyze_exp(exp_root,noises_names,snr_array,names,specific_s=winner_s,output_namedir="analysis_specific_s",)
 
+    analyze_exp(exp_root,noises_names,snr_array,names,specific_s=0.1,output_namedir="analysis_specific_s_0.1",)
 
